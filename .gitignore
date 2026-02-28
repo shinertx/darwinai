@@ -1,0 +1,23 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Environment — contains API keys, never commit
+.env
+.env.local
+.env.*
+
+# Runtime data — too large / always changing
+darwin.db
+darwin.db.*
+darwin.log
+darwin.log.*
+trades.jsonl
+graveyard.jsonl
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
