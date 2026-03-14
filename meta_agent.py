@@ -239,7 +239,7 @@ HYPOTHESIS: <your reasoning>
 
 def eval_window(since_ts_ms: int) -> dict:
     for _ in range(MAX_EVAL_WAIT_CYCLES):
-        result = run(f"npm run eval-window -- {since_ts_ms}")
+        result = run(f"python3 eval.py {since_ts_ms}")
         try:
             data = json.loads(result.stdout)
             if int(data.get("trades", 0)) >= MIN_TRADES:
@@ -254,7 +254,7 @@ def eval_window(since_ts_ms: int) -> dict:
             log.error("  eval parse error: %s | stdout=%s", exc, result.stdout[:400])
             time.sleep(60)
 
-    result = run(f"npm run eval-window -- {since_ts_ms}")
+    result = run(f"python3 eval.py {since_ts_ms}")
     return json.loads(result.stdout)
 
 
