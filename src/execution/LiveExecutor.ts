@@ -223,6 +223,11 @@ export class LiveExecutor {
           maePct: Math.max((pos.lowestPriceSol - pos.entryPriceSol) / pos.entryPriceSol, -1.0),
           exitReason, openedAt: pos.openedAt, closedAt: now, holdMs,
           isPaper: false, signalType: pos.signalType,
+          poolLiqSol: pos.poolLiqSol,
+          desiredSizeSol: pos.desiredSizeSol,
+          cappedSizeSol: pos.cappedSizeSol,
+          poolCapSol: pos.poolCapSol,
+          fillRatio: pos.fillRatio,
         }
         this.openPositions.delete(posId)
         this.lastRealPriceAt.delete(posId)

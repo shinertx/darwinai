@@ -190,9 +190,14 @@ export class PaperExecutor {
           exitReason,
           openedAt: pos.openedAt,
           closedAt: now,
-          holdMs,
-          isPaper: pos.isPaper,
-          signalType: pos.signalType,
+      holdMs,
+      isPaper: pos.isPaper,
+      signalType: pos.signalType,
+      poolLiqSol: pos.poolLiqSol,
+      desiredSizeSol: pos.desiredSizeSol,
+      cappedSizeSol: pos.cappedSizeSol,
+      poolCapSol: pos.poolCapSol,
+      fillRatio: pos.fillRatio,
         }
 
         this.openPositions.delete(posId)

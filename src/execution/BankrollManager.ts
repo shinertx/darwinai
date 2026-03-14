@@ -41,7 +41,7 @@ export class BankrollManager {
     signalType: 'migration' | 'whale_buy' | 'new_pool' | 'amm_activity' = 'amm_activity'
   ): {
     desiredSizeSol: number
-    cappedDesiredSizeSol: number
+    cappedSizeSol: number
     poolCapSol: number
     sizeSol: number
     signalMultiplier: number
@@ -55,13 +55,13 @@ export class BankrollManager {
       0.2  // amm_activity
 
     const desiredSizeSol = this.balance * capitalPct * signalMultiplier
-    const cappedDesiredSizeSol = Math.min(desiredSizeSol, this.balance * 0.95, MAX_POSITION_SOL)
+    const cappedSizeSol = Math.min(desiredSizeSol, this.balance * 0.95, MAX_POSITION_SOL)
     const poolCapSol = poolLiqSol * maxPoolPct
-    const sizeSol = Math.min(cappedDesiredSizeSol, poolCapSol)
+    const sizeSol = Math.min(cappedSizeSol, poolCapSol)
 
     return {
       desiredSizeSol,
-      cappedDesiredSizeSol,
+      cappedSizeSol,
       poolCapSol,
       sizeSol,
       signalMultiplier,

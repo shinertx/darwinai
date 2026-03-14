@@ -3,11 +3,11 @@
 meta_agent.py — Darwin paper-only autoresearch loop
 
 Each cycle:
-  1. Pick one approved tunable file
+  1. Pick one approved tunable runtime file
   2. Ask OpenAI for one targeted improvement
   3. Build and restart the paper app only
   4. Wait for fresh paper trades
-  5. Keep or revert based on eval.py score
+  5. Keep or revert using the shared mission evaluator
 """
 
 from __future__ import annotations
@@ -56,10 +56,8 @@ TARGET_APP_ERR_LOG = Path.home() / ".pm2" / "logs" / f"{TARGET_APP}-error.log"
 
 EXPERIMENT_MIN = int(os.getenv("AUTORESEARCH_EXPERIMENT_MINUTES", "8"))
 MIN_TRADES = int(os.getenv("AUTORESEARCH_MIN_TRADES", "30"))
-IMPROVE_THRESH = float(os.getenv("AUTORESEARCH_IMPROVE_THRESHOLD", "1.05"))
 MAX_EXPERIMENTS = int(os.getenv("AUTORESEARCH_MAX_EXPERIMENTS", "200"))
 VALIDATION_WINDOWS = max(1, int(os.getenv("AUTORESEARCH_VALIDATION_WINDOWS", "2")))
-VALIDATION_MIN_FACTOR = float(os.getenv("AUTORESEARCH_VALIDATION_MIN_FACTOR", "0.95"))
 MAX_EVAL_WAIT_CYCLES = max(1, int(os.getenv("AUTORESEARCH_MAX_WAIT_CYCLES", "4")))
 EVAL_WAIT_MINUTES = max(1, int(os.getenv("AUTORESEARCH_WAIT_MINUTES", "10")))
 MODEL = os.getenv("OPENAI_MODEL", "gpt-5.3-codex")
@@ -68,10 +66,19 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
 OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
 
 TUNABLE_FILES = [
-    "src/evolution/FitnessScorer.ts",
-    "src/market/MarketFeed.ts",
+    "src/evolution/EvolutionEngine.ts",
     "src/genome/GenomeFactory.ts",
+    "src/market/MarketFeed.ts",
+    "src/Orchestrator.ts",
+    "src/execution/BankrollManager.ts",
 ]
+
+TIER_PRIORITY = {
+    "hard_fail": 0,
+    "tier_c": 1,
+    "tier_b": 2,
+    "tier_a": 3,
+}
 
 
 logging.basicConfig(
@@ -196,19 +203,15 @@ def build_prompt(file_path: str, current_code: str, baseline: dict, history: lis
     history_str = json.dumps(history[-5:], indent=2) if history else "[]"
     baseline_str = json.dumps(baseline, indent=2)
 
-    types_section = ""
-    if file_path in ("src/market/MarketFeed.ts", "src/genome/GenomeFactory.ts"):
-        types_section = f"""
-=== AVAILABLE TYPES (src/types.ts) ===
-{types_ts}
-"""
-
     return f"""You are optimizing Darwin, a paper-first evolutionary Solana trading bot.
 
 === PROGRAM INSTRUCTIONS ===
 {program_md}
-{types_section}
-=== CURRENT BASELINE METRICS ===
+
+=== AVAILABLE TYPES (src/types.ts) ===
+{types_ts}
+
+=== CURRENT BASELINE ASSESSMENT ===
 {baseline_str}
 
 === LAST {min(5, len(history))} EXPERIMENTS ===
@@ -225,7 +228,8 @@ CRITICAL CONSTRAINTS:
 - Do NOT add any new import statements
 - Do NOT change function signatures or method names that other files depend on
 - Do NOT touch files outside the one shown above
-- Make exactly ONE targeted change to improve paper trading performance
+- Do NOT modify evaluation logic, docs, or logging schema from this file
+- Make exactly ONE targeted runtime change that should improve Darwin's mission alignment
 
 Output format:
 HYPOTHESIS: <your reasoning>
@@ -233,105 +237,41 @@ HYPOTHESIS: <your reasoning>
 <complete file content>"""
 
 
-def eval_score(since_ts_ms: int) -> dict:
+def eval_window(since_ts_ms: int) -> dict:
     for _ in range(MAX_EVAL_WAIT_CYCLES):
-        result = run(f"python3 eval.py {since_ts_ms}")
+        result = run(f"npm run eval-window -- {since_ts_ms}")
         try:
             data = json.loads(result.stdout)
-            if data["trades"] >= MIN_TRADES:
+            if int(data.get("trades", 0)) >= MIN_TRADES:
                 return data
             log.info(
                 "  Only %s paper trades so far, waiting %s more minutes...",
-                data["trades"],
+                data.get("trades", 0),
                 EVAL_WAIT_MINUTES,
             )
             time.sleep(EVAL_WAIT_MINUTES * 60)
         except Exception as exc:
-            log.error("  eval parse error: %s | stdout=%s", exc, result.stdout[:200])
+            log.error("  eval parse error: %s | stdout=%s", exc, result.stdout[:400])
             time.sleep(60)
 
-    return json.loads(run(f"python3 eval.py {since_ts_ms}").stdout)
-
-
-def aggregate_results(results: list[dict]) -> dict:
-    if not results:
-        return {
-            "score": -99.0,
-            "trades": 0,
-            "win_rate": 0,
-            "profit_factor": 0,
-            "avg_loss_pct": 0,
-            "avg_winner_pct": 0,
-            "best_trade_pct": 0,
-            "max_drawdown_sol": 0,
-            "total_pnl_sol": 0,
-            "gross_wins_sol": 0,
-            "gross_losses_sol": 0,
-            "no_pump_bail_pct": 0,
-            "no_pump_bail_count": 0,
-            "winners": 0,
-            "losers": 0,
-            "migration_trades": 0,
-            "migration_winners": 0,
-            "migration_win_rate": 0,
-            "windows": 0,
-        }
-
-    total_trades = sum(int(result.get("trades", 0)) for result in results)
-    total_winners = sum(int(result.get("winners", 0)) for result in results)
-    total_losers = sum(int(result.get("losers", 0)) for result in results)
-    total_pnl = sum(float(result.get("total_pnl_sol", 0)) for result in results)
-    gross_wins = sum(float(result.get("gross_wins_sol", 0)) for result in results)
-    gross_losses = sum(float(result.get("gross_losses_sol", 0)) for result in results)
-    no_pump_count = sum(int(result.get("no_pump_bail_count", 0)) for result in results)
-    migration_trades = sum(int(result.get("migration_trades", 0)) for result in results)
-    migration_winners = sum(int(result.get("migration_winners", 0)) for result in results)
-    weighted_score = sum(float(result.get("score", -99)) * int(result.get("trades", 0)) for result in results)
-    loss_pct_sum = sum(float(result.get("avg_loss_pct", 0)) * int(result.get("losers", 0)) for result in results)
-    winner_pct_sum = sum(float(result.get("avg_winner_pct", 0)) * int(result.get("winners", 0)) for result in results)
-
-    profit_factor = min(gross_wins / gross_losses, 5.0) if gross_losses > 0 else (2.0 if gross_wins > 0 else 0.0)
-    win_rate = (total_winners / total_trades) * 100 if total_trades else 0
-    no_pump_pct = (no_pump_count / total_trades) * 100 if total_trades else 0
-    migration_win_rate = (migration_winners / migration_trades) * 100 if migration_trades else 0
-
-    return {
-        "score": round(weighted_score / total_trades, 4) if total_trades else -99.0,
-        "trades": total_trades,
-        "win_rate": round(win_rate, 1),
-        "profit_factor": round(profit_factor, 3),
-        "avg_loss_pct": round(loss_pct_sum / total_losers, 2) if total_losers else 0,
-        "avg_winner_pct": round(winner_pct_sum / total_winners, 2) if total_winners else 0,
-        "best_trade_pct": round(max(float(result.get("best_trade_pct", 0)) for result in results), 2),
-        "max_drawdown_sol": round(max(float(result.get("max_drawdown_sol", 0)) for result in results), 6),
-        "total_pnl_sol": round(total_pnl, 6),
-        "gross_wins_sol": round(gross_wins, 6),
-        "gross_losses_sol": round(gross_losses, 6),
-        "no_pump_bail_pct": round(no_pump_pct, 1),
-        "no_pump_bail_count": no_pump_count,
-        "winners": total_winners,
-        "losers": total_losers,
-        "migration_trades": migration_trades,
-        "migration_winners": migration_winners,
-        "migration_win_rate": round(migration_win_rate, 1),
-        "windows": len(results),
-    }
+    result = run(f"npm run eval-window -- {since_ts_ms}")
+    return json.loads(result.stdout)
 
 
 def collect_window_metrics(label: str) -> dict:
     window_start = int(time.time() * 1000)
     log.info("  [%s] Waiting %s minutes for fresh paper trades...", label, EXPERIMENT_MIN)
     time.sleep(EXPERIMENT_MIN * 60)
-    result = eval_score(window_start)
-    log.info("  [%s] Metrics: %s", label, result)
-    return result
+    assessment = eval_window(window_start)
+    log.info("  [%s] Assessment: %s", label, summarize_assessment(assessment))
+    return {"since_ts_ms": window_start, "assessment": assessment}
 
 
 def rebuild() -> bool:
     log.info("  Building Darwin...")
     result = run("npm run build")
     if result.returncode != 0:
-        log.error("  BUILD FAILED:\n%s", (result.stdout + result.stderr)[-800:])
+        log.error("  BUILD FAILED:\n%s", (result.stdout + result.stderr)[-1200:])
         return False
     return True
 
@@ -391,13 +331,17 @@ def revert_file(file_path: str, backup_code: str) -> bool:
 
 
 def pick_file(experiment_num: int, baseline: dict) -> str:
-    no_pump = baseline.get("no_pump_bail_pct", 50)
-    win_rate = baseline.get("win_rate", 0)
-    mig_trades = baseline.get("migration_trades", 0)
-    if no_pump > 60:
+    no_pump = float(baseline.get("no_pump_bail_pct", 50))
+    migration_share = float(baseline.get("migration_share", 0))
+    migration_win_rate = float(baseline.get("migration_win_rate", 0))
+    fill_ratio = float(baseline.get("fill_ratio", 1))
+
+    if fill_ratio < 0.65:
+        return "src/execution/BankrollManager.ts"
+    if no_pump > 55:
+        return TUNABLE_FILES[(experiment_num - 1) % 3 + 2]
+    if migration_share < 75 or migration_win_rate < 45:
         return TUNABLE_FILES[(experiment_num - 1) % 2]
-    if win_rate < 30 or mig_trades < 5:
-        return TUNABLE_FILES[0]
     return TUNABLE_FILES[(experiment_num - 1) % len(TUNABLE_FILES)]
 
 
@@ -405,7 +349,7 @@ def build_fix_prompt(errors: str, error_context: str, hypothesis: str, file_path
     return f"""The TypeScript code you wrote has build errors. Fix ONLY the specific errors.
 
 BUILD ERRORS:
-{errors[:800]}
+{errors[:1000]}
 {error_context}
 
 ORIGINAL HYPOTHESIS: {hypothesis}
@@ -438,6 +382,75 @@ def extract_error_context(file_path: str, errors: str) -> str:
     return "\n\nFAILING CODE CONTEXT:\n" + "\n\n".join(snippets) if snippets else ""
 
 
+def summarize_assessment(assessment: dict) -> str:
+    return (
+        f"{assessment.get('tier', '?')} | "
+        f"growth {float(assessment.get('bankroll_growth_pct', 0)):.2f}% | "
+        f"best {float(assessment.get('best_trade_pct', 0)):.1f}% | "
+        f"mig {float(assessment.get('migration_share', 0)):.1f}% @ "
+        f"{float(assessment.get('migration_win_rate', 0)):.1f}% | "
+        f"no_pump {float(assessment.get('no_pump_bail_pct', 0)):.1f}% | "
+        f"dd {float(assessment.get('max_drawdown_pct', 0)):.1f}% | "
+        f"fill {float(assessment.get('fill_ratio', 0)):.2f}"
+    )
+
+
+def compare_rank_keys(left: dict, right: dict) -> int:
+    left_key = tuple(float(value) for value in left.get("rank_key", []))
+    right_key = tuple(float(value) for value in right.get("rank_key", []))
+    max_len = max(len(left_key), len(right_key))
+
+    for index in range(max_len):
+        left_value = left_key[index] if index < len(left_key) else 0.0
+        right_value = right_key[index] if index < len(right_key) else 0.0
+        if left_value == right_value:
+            continue
+        return 1 if left_value > right_value else -1
+    return 0
+
+
+def is_better_assessment(candidate: dict, baseline: dict) -> bool:
+    candidate_tier = TIER_PRIORITY.get(candidate.get("tier", "hard_fail"), 0)
+    baseline_tier = TIER_PRIORITY.get(baseline.get("tier", "hard_fail"), 0)
+    if candidate_tier != baseline_tier:
+        return candidate_tier > baseline_tier
+    return compare_rank_keys(candidate, baseline) > 0
+
+
+def worsened_too_much(candidate: dict, baseline: dict, key: str) -> bool:
+    baseline_value = float(baseline.get(key, 0))
+    candidate_value = float(candidate.get(key, 0))
+    allowance = baseline_value * 1.05 if baseline_value > 0 else 5.0
+    return candidate_value > allowance
+
+
+def migration_regressed(candidate: dict, baseline: dict) -> bool:
+    return float(candidate.get("migration_win_rate", 0)) + 1e-9 < float(baseline.get("migration_win_rate", 0))
+
+
+def candidate_passes(baseline: dict, aggregate: dict, window_results: list[dict]) -> tuple[bool, str]:
+    if aggregate.get("tier") == "hard_fail":
+        return False, "aggregate_hard_fail"
+
+    for window_index, window in enumerate(window_results, start=1):
+        if window.get("tier") == "hard_fail":
+            return False, f"window_{window_index}_hard_fail"
+
+    if not is_better_assessment(aggregate, baseline):
+        return False, "rank_tuple_not_improved"
+
+    if migration_regressed(aggregate, baseline):
+        return False, "migration_win_rate_regressed"
+
+    if worsened_too_much(aggregate, baseline, "no_pump_bail_pct"):
+        return False, "no_pump_bail_worsened_over_5pct_relative"
+
+    if worsened_too_much(aggregate, baseline, "max_drawdown_pct"):
+        return False, "max_drawdown_worsened_over_5pct_relative"
+
+    return True, "mission_improved"
+
+
 def main() -> int:
     if not OPENAI_API_KEY:
         log.error("OPENAI_API_KEY is required for autoresearch.")
@@ -462,8 +475,9 @@ def main() -> int:
         log.error("Failed to start healthy paper target app %s.", TARGET_APP)
         return 1
 
-    baseline = collect_window_metrics("BASELINE")
-    log.info("  BASELINE: %s", baseline)
+    baseline_window = collect_window_metrics("BASELINE")
+    baseline = baseline_window["assessment"]
+    log.info("  BASELINE: %s", summarize_assessment(baseline))
 
     for experiment_num in range(1, MAX_EXPERIMENTS + 1):
         file_path = pick_file(experiment_num, baseline)
@@ -478,7 +492,7 @@ def main() -> int:
 
         log.info("%s", "\n" + "=" * 60)
         log.info("EXPERIMENT %s — modifying %s", experiment_num, file_path)
-        log.info("Current baseline score: %s", baseline.get("score", "?"))
+        log.info("Current baseline: %s", summarize_assessment(baseline))
         log.info("%s", "=" * 60)
 
         try:
@@ -492,12 +506,12 @@ def main() -> int:
         if "HYPOTHESIS:" in raw:
             hypothesis = raw.split("HYPOTHESIS:", 1)[1].split("---FILE---", 1)[0].strip()
         new_code = extract_code(raw)
-        log.info("  Hypothesis: %s", hypothesis[:200])
+        log.info("  Hypothesis: %s", hypothesis[:240])
 
         write_file(file_path, new_code)
         build_result = run("npm run build")
         if build_result.returncode != 0:
-            errors = (build_result.stdout + build_result.stderr)[-1500:]
+            errors = (build_result.stdout + build_result.stderr)[-2000:]
             error_context = extract_error_context(file_path, errors)
             log.warning("  Build failed. Requesting focused correction...")
             try:
@@ -540,50 +554,47 @@ def main() -> int:
                 return 1
             continue
 
-        window_results = [collect_window_metrics("WINDOW 1")]
-        result = aggregate_results(window_results)
-        new_score = result.get("score", -99)
-        old_score = baseline.get("score", 0)
+        window_results: list[dict] = []
+        aggregate_result: dict | None = None
+        candidate_start_ms: int | None = None
 
-        improved = new_score >= old_score * IMPROVE_THRESH
-        if improved and VALIDATION_WINDOWS > 1:
-            log.info(
-                "  Candidate cleared the first window. Running %s validation window(s)...",
-                VALIDATION_WINDOWS - 1,
-            )
-            for window_num in range(2, VALIDATION_WINDOWS + 1):
-                window_result = collect_window_metrics(f"WINDOW {window_num}")
-                window_results.append(window_result)
-                result = aggregate_results(window_results)
-                new_score = result.get("score", -99)
-                validation_floor = old_score * VALIDATION_MIN_FACTOR
-                if window_result.get("score", -99) < validation_floor:
-                    log.info(
-                        "  Validation window %s fell below floor %.4f (got %.4f).",
-                        window_num,
-                        validation_floor,
-                        window_result.get("score", -99),
-                    )
-                    break
+        for window_num in range(1, VALIDATION_WINDOWS + 1):
+            collected = collect_window_metrics(f"WINDOW {window_num}")
+            window_assessment = collected["assessment"]
+            window_results.append(window_assessment)
+            candidate_start_ms = candidate_start_ms or collected["since_ts_ms"]
+            aggregate_result = eval_window(candidate_start_ms)
+            log.info("  Aggregate after window %s: %s", window_num, summarize_assessment(aggregate_result))
+            if window_assessment.get("tier") == "hard_fail":
+                log.info("  Window %s hard-failed; stopping validation early.", window_num)
+                break
 
-            improved = (
-                new_score >= old_score * IMPROVE_THRESH
-                and all(
-                    window.get("score", -99) >= old_score * VALIDATION_MIN_FACTOR
-                    for window in window_results[1:]
-                )
-            )
+        if aggregate_result is None:
+            aggregate_result = {
+                "tier": "hard_fail",
+                "rank_key": [],
+                "bankroll_growth_pct": -999,
+                "migration_win_rate": 0,
+                "no_pump_bail_pct": 100,
+                "max_drawdown_pct": 100,
+            }
 
+        improved, reason = candidate_passes(baseline, aggregate_result, window_results)
         log.info(
-            "  Aggregate score: %.4f vs baseline %.4f -> %s",
-            new_score,
-            old_score,
-            "KEEPER" if improved else "REVERT",
+            "  Aggregate verdict: %s -> %s (%s)",
+            summarize_assessment(baseline),
+            summarize_assessment(aggregate_result),
+            reason,
         )
 
         if improved:
-            baseline = result
-            commit_message = f"auto[{label}]: {file_path} score {old_score:.4f}->{new_score:.4f} | {hypothesis[:80]}"
+            baseline = aggregate_result
+            commit_message = (
+                f"auto[{label}]: {file_path} "
+                f"{baseline.get('tier', '?')} "
+                f"growth {float(baseline.get('bankroll_growth_pct', 0)):.2f}% | "
+                f"{hypothesis[:70]}"
+            )
             git_commit(file_path, commit_message)
         else:
             if not revert_file(file_path, current_code):
@@ -592,12 +603,12 @@ def main() -> int:
         history.append({
             "exp": experiment_num,
             "file": file_path,
-            "hypothesis": hypothesis[:200],
-            "score_before": old_score,
-            "score_after": new_score,
-            "kept": improved,
-            "metrics": result,
+            "hypothesis": hypothesis[:240],
+            "baseline": baseline,
+            "result": aggregate_result,
             "windows": window_results,
+            "kept": improved,
+            "reason": reason,
         })
         save_history(history)
 

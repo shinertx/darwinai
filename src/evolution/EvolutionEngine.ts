@@ -5,12 +5,10 @@
 import { Genome, StrategyRecord, GenerationResult, FitnessScore } from '../types'
 import { FitnessScorer } from './FitnessScorer'
 import { createRandom, crossover, mutate } from '../genome/GenomeFactory'
+import { compareAssessments } from './MissionAssessment'
 
 const PRESERVE_TOP = 5
 const DELETE_BOTTOM = 10
-const BREED_COUNT = 10
-const MUTATE_COUNT = 7
-const SPAWN_RANDOM = 5
 
 export class EvolutionEngine {
   private scorer = new FitnessScorer()
@@ -25,31 +23,44 @@ export class EvolutionEngine {
       this.scorer.score(s.id, s.genomeId, s.trades, s.startedAt)
     )
 
-    // Sort by score descending
-    scores.sort((a, b) => b.score - a.score)
+    // Sort by tier priority first, then by the ordered mission rank tuple.
+    scores.sort(compareAssessments)
 
     const ranked = scores.map((sc, i) => ({
       score: sc,
       strategy: strategies.find((s) => s.id === sc.strategyId)!,
     }))
 
-    // Bottom 10 are killed
-    const bottom = ranked.slice(-DELETE_BOTTOM)
-    const kill = bottom.map((r) => r.strategy.id)
-
-    // Top 5 are preserved
-    const top = ranked.slice(0, PRESERVE_TOP)
+    const qualified = ranked.filter((entry) => entry.score.tier === 'tier_a' || entry.score.tier === 'tier_b')
+    const top = qualified.slice(0, PRESERVE_TOP)
     const preserve = top.map((r) => r.strategy.id)
+    const preserveSet = new Set(preserve)
+
+    const prioritizedCull = ranked
+      .filter((entry) => !preserveSet.has(entry.strategy.id))
+      .filter((entry) => entry.score.tier === 'hard_fail' || entry.score.tier === 'tier_c')
+      .map((entry) => entry.strategy.id)
+
+    const kill = [...prioritizedCull]
+    if (kill.length < DELETE_BOTTOM) {
+      for (let index = ranked.length - 1; index >= 0 && kill.length < DELETE_BOTTOM; index--) {
+        const entry = ranked[index]
+        if (preserveSet.has(entry.strategy.id) || kill.includes(entry.strategy.id)) continue
+        kill.push(entry.strategy.id)
+      }
+    }
+    const killSet = new Set(kill)
 
     // Get survivor genomes (not killed)
-    const survivors = ranked.filter((r) => !kill.includes(r.strategy.id))
+    const survivors = ranked.filter((r) => !killSet.has(r.strategy.id))
     const survivorGenomes = survivors.map((r) => r.strategy.genome)
-
-    // Breed 10 from top performers (random pairs from top 5-10)
-    const breedPool = ranked.slice(0, Math.min(10, ranked.length))
+    const breedPool = qualified.filter((entry) => !killSet.has(entry.strategy.id)).slice(0, Math.min(10, qualified.length))
     const newGenomes: Genome[] = []
+    const targetNewGenomes = kill.length
+    const breedCount = breedPool.length >= 2 ? Math.floor(targetNewGenomes * 0.45) : 0
+    const mutateCount = survivorGenomes.length > 0 ? Math.floor(targetNewGenomes * 0.35) : 0
 
-    for (let i = 0; i < BREED_COUNT; i++) {
+    for (let i = 0; i < breedCount; i++) {
       const aIdx = Math.floor(Math.random() * breedPool.length)
       let bIdx = Math.floor(Math.random() * breedPool.length)
       while (bIdx === aIdx && breedPool.length > 1) bIdx = Math.floor(Math.random() * breedPool.length)
@@ -61,14 +72,12 @@ export class EvolutionEngine {
       newGenomes.push(child)
     }
 
-    // Mutate 7 from survivors
-    for (let i = 0; i < MUTATE_COUNT && i < survivorGenomes.length; i++) {
+    for (let i = 0; i < mutateCount && i < survivorGenomes.length; i++) {
       const idx = Math.floor(Math.random() * survivorGenomes.length)
       newGenomes.push(mutate(survivorGenomes[idx], this.generation))
     }
 
-    // Spawn 5 completely random
-    for (let i = 0; i < SPAWN_RANDOM; i++) {
+    while (newGenomes.length < targetNewGenomes) {
       newGenomes.push(createRandom(this.generation))
     }
 

@@ -80,6 +80,10 @@ export interface Position {
   isPaper: boolean
   poolLiqSol: number
   signalType: 'migration' | 'whale_buy' | 'new_pool' | 'amm_activity'
+  desiredSizeSol?: number
+  cappedSizeSol?: number
+  poolCapSol?: number
+  fillRatio?: number
 }
 
 export interface ClosedTrade {
@@ -101,11 +105,46 @@ export interface ClosedTrade {
   holdMs: number
   isPaper: boolean
   signalType: 'migration' | 'whale_buy' | 'new_pool' | 'amm_activity'
+  poolLiqSol?: number
+  desiredSizeSol?: number
+  cappedSizeSol?: number
+  poolCapSol?: number
+  fillRatio?: number
 }
 
-export interface FitnessScore {
+export interface StrategyAssessmentMetrics {
+  bankrollGrowthPct: number
+  avgWinnerPct: number
+  bestTradePct: number
+  migrationShare: number
+  migrationWinRate: number
+  profitFactor: number
+  noPumpBailPct: number
+  maxDrawdownPct: number
+  tradeCount: number
+  migrationTrades: number
+  fillRatio: number
+  totalPnlSol: number
+  tradesPerHour: number
+  winners: number
+  losers: number
+  grossWinsSol: number
+  grossLossesSol: number
+  noPumpBailCount: number
+  migrationWinners: number
+  currentBalanceSol: number
+  startingBalanceSol: number
+}
+
+export type StrategyAssessmentTier = 'hard_fail' | 'tier_a' | 'tier_b' | 'tier_c'
+
+export interface StrategyAssessment {
   strategyId: string
   genomeId: string
+  metrics: StrategyAssessmentMetrics
+  tier: StrategyAssessmentTier
+  gateFailures: string[]
+  rankKey: number[]
   tradeCount: number
   upsideCapture: number     // avg return on winning trades
   bestTradeReturn: number   // best single trade %
@@ -113,10 +152,19 @@ export interface FitnessScore {
   tradeFrequency: number    // trades per hour
   maxDrawdownPct: number
   totalPnlSol: number
-  score: number             // composite fitness
+  score: number             // compatibility score proxy only; tier/rankKey drive selection
   computedAt: number
   disqualified: boolean
   disqualifyReason?: string
+}
+
+export type FitnessScore = StrategyAssessment
+
+export interface SignalSkipEvent {
+  signal: MarketSignal
+  reason: string
+  details?: Record<string, any>
+  timestamp: number
 }
 
 export interface StrategyRecord {

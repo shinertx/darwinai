@@ -2,6 +2,8 @@
 
 Darwin is an evolutionary Solana trading organism that listens to PumpSwap market events, evaluates a population of genomes, and executes either simulated or live trades depending on runtime mode.
 
+The project is now graded on a mission dashboard instead of a single win-rate-heavy score. Darwin prefers strategies that grow bankroll, catch outsized migration winners, keep `no_pump_bail` noise down, and stay scalable against pool depth.
+
 ## Docs
 
 - [GENESIS.md](./GENESIS.md): strategy vision and long-term mission
@@ -27,6 +29,24 @@ Darwin now uses both hard signal floors and a dynamic pool-depth guard:
 - `DARWIN_MIN_MEANINGFUL_FILL_RATIO=0.5`
 
 That means Darwin skips pools that are obviously too thin, and it also skips signals where the pool cannot support a meaningful fraction of the intended position size.
+
+## Mission Assessment
+
+Darwin runtime selection, `npm run eval-window`, and autoresearch all share the same assessment logic. The primary dashboard is:
+
+- `bankroll_growth_pct`
+- `avg_winner_pct`
+- `best_trade_pct`
+- `migration_share`
+- `migration_win_rate`
+- `profit_factor`
+- `no_pump_bail_pct`
+- `max_drawdown_pct`
+- `trade_count`
+- `migration_trades`
+- `fill_ratio`
+
+Selection uses hard-fail gates first, then `tier_a` / `tier_b` / `tier_c`, then an ordered rank tuple inside each tier.
 
 ## Quick Start
 
@@ -59,9 +79,11 @@ pm2 start ecosystem.config.cjs --only darwin-live
 
 `meta_agent.py` runs short paper-trading experiments against the approved tunable files:
 
-- `src/evolution/FitnessScorer.ts`
+- `src/evolution/EvolutionEngine.ts`
 - `src/genome/GenomeFactory.ts`
 - `src/market/MarketFeed.ts`
+- `src/Orchestrator.ts`
+- `src/execution/BankrollManager.ts`
 
 It uses the OpenAI Responses API with:
 
@@ -72,7 +94,21 @@ It uses the OpenAI Responses API with:
 
 By default, autoresearch now waits for at least `30` paper trades per window and validates keeper candidates across `2` consecutive paper windows before committing them.
 
+Candidates only stick when:
+
+- every validation window clears hard-fail gates
+- the aggregate candidate improves the mission rank tuple over baseline
+- `migration_win_rate` does not regress
+- `no_pump_bail_pct` and `max_drawdown_pct` do not worsen by more than `5%` relative
+
 The autoresearch loop never stops or restarts `darwin-live`.
+
+Use the shared evaluator directly with:
+
+```bash
+npm run eval-window -- 0
+python3 eval.py 0
+```
 
 ## Ops Scripts
 

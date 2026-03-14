@@ -50,6 +50,10 @@ export class Strategy {
     return scorer.score(this.id, this.genome.id, this.trades, this.startedAt)
   }
 
+  public getAssessment(): FitnessScore {
+    return this.getFitness()
+  }
+
   public getHoursActive(): number {
     return (Date.now() - this.startedAt) / (1000 * 60 * 60)
   }

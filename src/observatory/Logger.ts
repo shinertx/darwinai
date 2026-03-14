@@ -5,7 +5,7 @@
 import fs from 'fs'
 import path from 'path'
 import Database from 'better-sqlite3'
-import { Genome, FitnessScore, ClosedTrade, GenerationResult } from '../types'
+import { Genome, FitnessScore, ClosedTrade, GenerationResult, MarketSignal } from '../types'
 
 const LOG_DIR = process.env.LOG_DIR || path.resolve(process.cwd(), 'logs')
 const DB_PATH = process.env.DB_PATH || path.resolve(process.cwd(), 'darwin.db')
@@ -16,6 +16,7 @@ export class Logger {
   private generationLogPath: string
   private tradesPath: string
   private bankrollPath: string
+  private signalSkipsPath: string
 
   constructor() {
     // Ensure log dir exists
@@ -25,6 +26,7 @@ export class Logger {
     this.generationLogPath = path.join(LOG_DIR, 'generation_log.jsonl')
     this.tradesPath = path.join(process.cwd(), 'trades.jsonl')
     this.bankrollPath = path.join(LOG_DIR, 'bankroll.jsonl')
+    this.signalSkipsPath = path.join(LOG_DIR, 'signal_skips.jsonl')
   }
 
   public initDb(): void {
@@ -48,7 +50,12 @@ export class Logger {
         closed_at INTEGER,
         hold_ms INTEGER,
         is_paper INTEGER,
-        signal_type TEXT
+        signal_type TEXT,
+        pool_liq_sol REAL,
+        desired_size_sol REAL,
+        capped_size_sol REAL,
+        pool_cap_sol REAL,
+        fill_ratio REAL
       );
 
       CREATE TABLE IF NOT EXISTS graveyard (
@@ -76,7 +83,24 @@ export class Logger {
       );
 
       CREATE INDEX IF NOT EXISTS idx_genomes_score ON genomes(fitness_score DESC);
+
+      CREATE TABLE IF NOT EXISTS signal_skips (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        mint TEXT,
+        pool TEXT,
+        signal_type TEXT,
+        reason TEXT,
+        details_json TEXT,
+        logged_at INTEGER
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_signal_skips_logged_at ON signal_skips(logged_at);
     `)
+    this.ensureColumn('trades', 'pool_liq_sol', 'REAL')
+    this.ensureColumn('trades', 'desired_size_sol', 'REAL')
+    this.ensureColumn('trades', 'capped_size_sol', 'REAL')
+    this.ensureColumn('trades', 'pool_cap_sol', 'REAL')
+    this.ensureColumn('trades', 'fill_ratio', 'REAL')
     console.log('[Logger] DB initialized at ' + DB_PATH)
   }
 
@@ -87,6 +111,8 @@ export class Logger {
       fitness: fitness.score,
       tradeCount: fitness.tradeCount,
       totalPnlSol: fitness.totalPnlSol,
+      tier: fitness.tier,
+      gateFailures: fitness.gateFailures,
       reason,
       diedAt: Date.now(),
       genome,
@@ -111,12 +137,20 @@ export class Logger {
       preserved: result.preserve.length,
       newGenomes: result.newGenomes.length,
       topScore: result.scores.length > 0 ? result.scores[0].score : 0,
+      topTier: result.scores.length > 0 ? result.scores[0].tier : 'hard_fail',
       scores: result.scores.map((s) => ({
         strategyId: s.strategyId,
+        tier: s.tier,
         score: s.score,
         tradeCount: s.tradeCount,
         totalPnlSol: s.totalPnlSol,
+        bankrollGrowthPct: s.metrics.bankrollGrowthPct,
+        migrationShare: s.metrics.migrationShare,
+        migrationWinRate: s.metrics.migrationWinRate,
+        noPumpBailPct: s.metrics.noPumpBailPct,
+        fillRatio: s.metrics.fillRatio,
         disqualified: s.disqualified,
+        gateFailures: s.gateFailures,
       })),
     }
     this.appendJsonl(this.generationLogPath, entry)
@@ -132,10 +166,12 @@ export class Logger {
             id, strategy_id, genome_id, mint, pool,
             entry_price_sol, exit_price_sol, size_sol,
             pnl_sol, pnl_pct, mfe_pct, mae_pct, exit_reason,
-            opened_at, closed_at, hold_ms, is_paper, signal_type
+            opened_at, closed_at, hold_ms, is_paper, signal_type,
+            pool_liq_sol, desired_size_sol, capped_size_sol, pool_cap_sol, fill_ratio
           ) VALUES (
             ?, ?, ?, ?, ?,
             ?, ?, ?,
+            ?, ?, ?, ?, ?,
             ?, ?, ?, ?, ?,
             ?, ?, ?, ?, ?
           )
@@ -144,7 +180,38 @@ export class Logger {
           trade.entryPriceSol, trade.exitPriceSol, trade.sizeSol,
           trade.pnlSol, trade.pnlPct, trade.mfePct, trade.maePct, trade.exitReason,
           trade.openedAt, trade.closedAt, trade.holdMs, trade.isPaper ? 1 : 0,
-          trade.signalType || null
+          trade.signalType || null,
+          trade.poolLiqSol ?? null,
+          trade.desiredSizeSol ?? null,
+          trade.cappedSizeSol ?? null,
+          trade.poolCapSol ?? null,
+          trade.fillRatio ?? null
+        )
+      } catch (e) {}
+    }
+  }
+
+  public logSignalSkip(signal: MarketSignal, reason: string, details: Record<string, any> = {}): void {
+    const entry = {
+      timestamp: Date.now(),
+      reason,
+      signal,
+      details,
+    }
+    this.appendJsonl(this.signalSkipsPath, entry)
+
+    if (this.db) {
+      try {
+        this.db.prepare(`
+          INSERT INTO signal_skips (mint, pool, signal_type, reason, details_json, logged_at)
+          VALUES (?, ?, ?, ?, ?, ?)
+        `).run(
+          signal.mint,
+          signal.pool,
+          signal.type,
+          reason,
+          JSON.stringify(details),
+          entry.timestamp
         )
       } catch (e) {}
     }
@@ -157,8 +224,8 @@ export class Logger {
   public saveGenome(genome: Genome, fitness: FitnessScore): void {
     if (!this.db) return
     try {
-      const winRate = fitness.tradeCount > 0
-        ? (fitness.upsideCapture > 0 ? fitness.tradeFrequency : 0)
+      const winRate = fitness.metrics.tradeCount > 0
+        ? fitness.metrics.migrationWinRate / 100
         : 0
       const insertSql = 'INSERT OR REPLACE INTO genomes (genome_id, genome_json, fitness_score, trade_count, win_rate, total_pnl_sol, generation, saved_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
       this.db.prepare(insertSql).run(
@@ -194,5 +261,12 @@ export class Logger {
     } catch (e) {
       console.error('[Logger] Failed to write to ' + filePath + ':', e)
     }
+  }
+
+  private ensureColumn(table: string, column: string, definition: string): void {
+    if (!this.db) return
+    const rows = this.db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>
+    if (rows.some((row) => row.name === column)) return
+    this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`)
   }
 }

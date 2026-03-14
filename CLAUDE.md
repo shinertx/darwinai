@@ -41,6 +41,8 @@ RPC_URLS=...
 WSS_URL=...
 STARTING_BALANCE_SOL=1.0
 DARWIN_POP_SIZE=16
+DARWIN_GENERATION_INTERVAL_MIN=60
+DARWIN_GENERATION_TRADE_THRESHOLD=75
 MIGRATION_MIN_LIQUIDITY_SOL=25
 AMM_ACTIVITY_MIN_LIQUIDITY_SOL=50
 DARWIN_TARGET_ENTRY_POOL_PCT=0.03
@@ -84,6 +86,7 @@ pm2 logs darwin-paper --lines 50 --nostream
 pm2 logs darwin-autoresearch --lines 50 --nostream
 
 # Evaluate paper performance
+npm run eval-window -- 0
 python3 eval.py 0
 
 # Stop live mode if it was started
@@ -93,11 +96,14 @@ pm2 stop darwin-live
 ## Autoresearch rules
 
 - Tunable files only:
-  - `src/evolution/FitnessScorer.ts`
+  - `src/evolution/EvolutionEngine.ts`
   - `src/genome/GenomeFactory.ts`
   - `src/market/MarketFeed.ts`
+  - `src/Orchestrator.ts`
+  - `src/execution/BankrollManager.ts`
 - Commits must stage only the tuned file, never logs or runtime outputs.
 - If build or paper-app health fails, revert immediately and leave `darwin-paper` on the last known good build.
+- Keepers must improve the shared mission rank tuple, not just a single scalar score.
 
 ## Related docs
 

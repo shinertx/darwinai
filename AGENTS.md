@@ -10,15 +10,22 @@
 ## Autoresearch Scope
 
 - `meta_agent.py` may only modify:
-  - `src/evolution/FitnessScorer.ts`
+  - `src/evolution/EvolutionEngine.ts`
   - `src/genome/GenomeFactory.ts`
   - `src/market/MarketFeed.ts`
+  - `src/Orchestrator.ts`
+  - `src/execution/BankrollManager.ts`
+- `meta_agent.py` must never modify:
+  - `src/evolution/MissionAssessment.ts`
+  - `src/evaluation/*`
+  - docs, logging schema, or automation logic
 - Autoresearch must target `darwin-paper` only.
 - Autoresearch commits must stage only the tuned source file, never `git add -A`.
 
 ## Operator Workflow
 
 - Build after TypeScript changes with `npm run build`.
+- Use `npm run eval-window -- <since_ms>` or `python3 eval.py <since_ms>` for paper-window grading.
 - Use `pm2 start ecosystem.config.cjs --only darwin-paper` for paper mode.
 - Use `pm2 start ecosystem.config.cjs --only darwin-autoresearch` only after `darwin-paper` is healthy.
 - Start `darwin-live` manually and only after paper mode has been validated.

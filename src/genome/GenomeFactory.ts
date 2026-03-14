@@ -15,6 +15,7 @@ const LEAF_SIGNAL_TYPES: SignalType[] = [
 ]
 
 const LOGIC_TYPES: SignalType[] = ['AND', 'OR', 'NOT', 'THRESHOLD', 'WEIGHTED_SUM']
+type StrategyBias = 'migration' | 'exploration'
 
 function randBetween(min: number, max: number): number {
   return min + Math.random() * (max - min)
@@ -52,7 +53,19 @@ function defaultParams(type: SignalType): Record<string, number> {
   }
 }
 
-function randomExitGenome(): ExitGenome {
+function randomExitGenome(bias: StrategyBias = 'exploration'): ExitGenome {
+  if (bias === 'migration') {
+    return {
+      takeProfitPct: randBetween(0.25, 1.20),
+      trailingActivatePct: randBetween(0.10, 0.35),
+      trailingDistancePct: randBetween(0.08, 0.22),
+      timeStopMs: randBetween(60000, 300000),
+      noPumpBailMs: randBetween(12000, 30000),
+      fadeGivebackPct: randBetween(0.15, 0.35),
+      moonbagPct: Math.random() < 0.45 ? randBetween(0.12, 0.45) : 0,
+    }
+  }
+
   return {
     takeProfitPct: randBetween(0.08, 0.80),
     trailingActivatePct: randBetween(0.04, 0.20),
@@ -135,14 +148,15 @@ function buildMigrationBiasedEntryGenome(): EntryGenome {
 }
 
 export function createRandom(generation = 0): Genome {
-  const entry = Math.random() < 0.70
+  const bias: StrategyBias = Math.random() < 0.80 ? 'migration' : 'exploration'
+  const entry = bias === 'migration'
     ? buildMigrationBiasedEntryGenome()
     : buildRandomEntryGenome()
 
   return {
     id: 'genome_' + uuidv4().slice(0, 8),
     entry,
-    exit: randomExitGenome(),
+    exit: randomExitGenome(bias),
     risk: randomRiskGenome(),
     generation,
     parentIds: [],
@@ -163,7 +177,12 @@ export function crossover(a: Genome, b: Genome, generation: number): Genome {
     useAEntry = Math.random() < 0.5
   }
   const entry = deepClone(useAEntry ? a.entry : b.entry)
-  const exit = deepClone(useAEntry ? b.exit : a.exit)
+  const entryBias: StrategyBias = entry.nodes.some((n: SignalNode) => n.type === 'migration_signal')
+    ? 'migration'
+    : 'exploration'
+  const exit = Math.random() < 0.7
+    ? deepClone(entryBias === 'migration' ? (aHasMigration ? a.exit : b.exit) : (useAEntry ? b.exit : a.exit))
+    : randomExitGenome(entryBias)
 
   const risk: RiskGenome = {
     capitalPct: Math.max(a.risk.capitalPct, b.risk.capitalPct) * 0.6 +
@@ -210,7 +229,7 @@ export function mutate(g: Genome, generation: number): Genome {
   if (roll < 0.05) {
     clone.entry = buildRandomEntryGenome()
   } else if (roll < 0.10) {
-    clone.exit = randomExitGenome()
+    clone.exit = randomExitGenome(hasMigrationRoot ? 'migration' : 'exploration')
   } else if (roll < 0.35) {
     if (clone.entry.nodes.length > 0) {
       const node = pick(clone.entry.nodes)

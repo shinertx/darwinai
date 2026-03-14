@@ -9,6 +9,8 @@
     "start:paper": "DARWIN_MODE=paper node dist/index.js",
     "start:live": "DARWIN_MODE=live node dist/index.js",
     "dev": "ts-node src/index.ts",
+    "eval-window": "node dist/cli/eval-window.js",
+    "test": "npm run build && node --test dist/tests/*.test.js",
     "pm2:start:paper": "pm2 start ecosystem.config.cjs --only darwin-paper",
     "pm2:start:live": "pm2 start ecosystem.config.cjs --only darwin-live",
     "pm2:start:autoresearch": "pm2 start ecosystem.config.cjs --only darwin-autoresearch"

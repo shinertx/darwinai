@@ -11,11 +11,11 @@ import { BankrollManager } from './execution/BankrollManager'
 import { Logger } from './observatory/Logger'
 import { PoolPriceService } from './market/PoolPriceService'
 import { createRandom } from './genome/GenomeFactory'
-import { MarketSignal, PricePoint, Genome, ClosedTrade } from './types'
+import { MarketSignal, PricePoint, Genome, SignalSkipEvent } from './types'
 import { getPrimaryRpcUrl, resolveRuntimeConfig, RuntimeConfig } from './config/runtime'
+import { resolveGenerationCadence } from './config/mission'
+import { compareAssessments } from './evolution/MissionAssessment'
 
-const GENERATION_INTERVAL_MS = 1 * 60 * 60 * 1000  // 1 hour (was 4)
-const GENERATION_TRADE_THRESHOLD = 75              // (was 300)
 const STATUS_INTERVAL_MS = 30 * 1000
 const TICK_INTERVAL_MS = 1000
 const PRICE_POLL_INTERVAL_MS = 3000
@@ -41,6 +41,7 @@ export class Orchestrator {
   private bankroll: BankrollManager
   private logger: Logger
   private poolPriceService: PoolPriceService | null = null
+  private generationCadence = resolveGenerationCadence(process.env)
   private lastGenerationAt = Date.now()
   private totalTradesSinceGeneration = 0
   private totalTrades = 0
@@ -82,6 +83,11 @@ export class Orchestrator {
     console.log('[Darwin] Mode: ' + this.runtime.mode.toUpperCase())
     console.log('[Darwin] Population size: ' + parseInt(process.env.DARWIN_POP_SIZE || '16', 10))
     console.log('[Darwin] Starting balance: ' + this.bankroll.getCurrentBalance().toFixed(4) + ' SOL')
+    console.log(
+      '[Darwin] Generation cadence: ' +
+      this.generationCadence.intervalMin + 'm or ' +
+      this.generationCadence.tradeThreshold + ' trades'
+    )
     if (this.liveMode) {
       console.log('[Darwin] Live trade size: ' + parseFloat(process.env.LIVE_TRADE_SIZE_SOL || '0.001').toFixed(4) + ' SOL')
     }
@@ -99,6 +105,9 @@ export class Orchestrator {
 
     this.feed.on('signal', (signal: MarketSignal) => {
       this.onSignal(signal).catch((e) => console.error('[Darwin] onSignal error:', e))
+    })
+    this.feed.on('signal_skipped', (event: SignalSkipEvent) => {
+      this.logger.logSignalSkip(event.signal, event.reason, event.details || {})
     })
     if (!this.feed.start()) {
       throw new Error('MarketFeed failed to start. Set RPC_URL or RPC_URLS before launching Darwin.')
@@ -152,11 +161,20 @@ export class Orchestrator {
     const balance = this.bankroll.getCurrentBalance()
     const inSurvivalMode = balance < this.startingBalance * 0.70
     if (inSurvivalMode && signal.type !== 'migration') {
+      this.logSignalSkip(signal, 'survival_mode_non_migration', {
+        balance,
+        survivalFloor: this.startingBalance * 0.70,
+      })
       return  // Skip all non-migration signals when bleeding out
     }
 
     // Hard floor: skip obviously too-thin pools before strategy evaluation.
-    if (signal.liquiditySol > 0 && signal.liquiditySol < this.getSignalLiquidityFloor(signal.type)) {
+    const hardLiquidityFloor = this.getSignalLiquidityFloor(signal.type)
+    if (signal.liquiditySol > 0 && signal.liquiditySol < hardLiquidityFloor) {
+      this.logSignalSkip(signal, 'liquidity_below_hard_floor', {
+        liquiditySol: signal.liquiditySol,
+        requiredLiquiditySol: hardLiquidityFloor,
+      })
       return
     }
 
@@ -200,6 +218,7 @@ export class Orchestrator {
     // If we still have no price, skip — we cannot paper trade without knowing what we paid
     if (entryPrice === 0) {
       console.log('[Darwin] SKIP: ' + signal.mint.slice(0, 8) + '... no price available (' + signal.type + ')')
+      this.logSignalSkip(signal, 'no_entry_price', { signalType: signal.type })
       return
     }
 
@@ -214,7 +233,12 @@ export class Orchestrator {
 
     for (const strategy of strategies) {
       try {
-        if (availableCapital < 0.01) break  // No capital left — skip remaining strategies
+        if (availableCapital < 0.01) {
+          this.logSignalSkip(signal, 'insufficient_available_capital', {
+            availableCapital,
+          })
+          break
+        }
 
         const openCount = this.liveMode && this.liveExecutor ? this.liveExecutor.getOpenPositionCount(strategy.id) : this.paperExecutor.getOpenPositionCount(strategy.id)
         if (openCount >= strategy.genome.risk.maxConcurrent) continue
@@ -231,15 +255,38 @@ export class Orchestrator {
             signal.type
           )
           const dynamicLiquidityFloor = this.getDynamicLiquidityFloor(signal.type, sizing.desiredSizeSol)
-          if (signal.liquiditySol > 0 && signal.liquiditySol < dynamicLiquidityFloor) continue
-
-          const fillRatio = sizing.desiredSizeSol > 0 ? sizing.poolCapSol / sizing.desiredSizeSol : 0
-          if (sizing.poolCapSol > 0 && fillRatio < MIN_MEANINGFUL_FILL_RATIO) continue
+          if (signal.liquiditySol > 0 && signal.liquiditySol < dynamicLiquidityFloor) {
+            this.logSignalSkip(signal, 'liquidity_below_dynamic_floor', {
+              liquiditySol: signal.liquiditySol,
+              requiredLiquiditySol: dynamicLiquidityFloor,
+              desiredSizeSol: sizing.desiredSizeSol,
+            })
+            continue
+          }
 
           // Size using BankrollManager (signal-type multiplier + hard cap)
           const sizeSol = Math.min(sizing.sizeSol, availableCapital * 0.95)
+          const fillRatio = sizing.desiredSizeSol > 0 ? sizeSol / sizing.desiredSizeSol : 0
 
-          if (sizeSol < 0.00001) continue  // floor: 10 lamports minimum
+          if (sizeSol > 0 && fillRatio < MIN_MEANINGFUL_FILL_RATIO) {
+            this.logSignalSkip(signal, 'fill_ratio_below_meaningful_floor', {
+              fillRatio,
+              minFillRatio: MIN_MEANINGFUL_FILL_RATIO,
+              desiredSizeSol: sizing.desiredSizeSol,
+              cappedSizeSol: sizing.cappedSizeSol,
+              poolCapSol: sizing.poolCapSol,
+              availableCapital,
+            })
+            continue
+          }
+
+          if (sizeSol < 0.00001) {
+            this.logSignalSkip(signal, 'position_size_below_minimum', {
+              sizeSol,
+              desiredSizeSol: sizing.desiredSizeSol,
+            })
+            continue
+          }
 
           // Track signal traded
           if (signal.type === 'migration') this.signalTradedLog.migration++
@@ -255,6 +302,12 @@ export class Orchestrator {
             console.log('[Darwin] TX FAILED: ' + strategy.id.slice(-8) + ' | ' + signal.mint.slice(0,8) + '... (simulated failed tx)')
             continue
           }
+
+          pos.poolLiqSol = signal.liquiditySol
+          pos.desiredSizeSol = sizing.desiredSizeSol
+          pos.cappedSizeSol = sizing.cappedSizeSol
+          pos.poolCapSol = sizing.poolCapSol
+          pos.fillRatio = fillRatio
 
           availableCapital -= sizeSol  // Deduct from pool for subsequent strategies
 
@@ -402,8 +455,8 @@ export class Orchestrator {
 
   private maybeRunGeneration(): void {
     const timeSinceLast = Date.now() - this.lastGenerationAt
-    const tradeThreshold = this.totalTradesSinceGeneration >= GENERATION_TRADE_THRESHOLD
-    const timeThreshold = timeSinceLast >= GENERATION_INTERVAL_MS
+    const tradeThreshold = this.totalTradesSinceGeneration >= this.generationCadence.tradeThreshold
+    const timeThreshold = timeSinceLast >= this.generationCadence.intervalMs
 
     if (tradeThreshold || timeThreshold) {
       const reason = tradeThreshold ? 'trade_threshold' : 'time_threshold'
@@ -442,12 +495,12 @@ export class Orchestrator {
     const openCount = this.liveMode && this.liveExecutor ? this.liveExecutor.getOpenPositionCount() : this.paperExecutor.getOpenPositionCount()
 
     const scored = strategies.map((s) => s.getFitness()).filter((f) => f.tradeCount > 0)
-    scored.sort((a, b) => b.score - a.score)
+    scored.sort(compareAssessments)
 
-    const bestFitness = scored.length > 0 ? scored[0].score : 0
+    const bestAssessment = scored[0]
     const timeSinceLast = Date.now() - this.lastGenerationAt
-    const timeUntilGen = Math.max(0, GENERATION_INTERVAL_MS - timeSinceLast)
-    const tradesUntilGen = Math.max(0, GENERATION_TRADE_THRESHOLD - this.totalTradesSinceGeneration)
+    const timeUntilGen = Math.max(0, this.generationCadence.intervalMs - timeSinceLast)
+    const tradesUntilGen = Math.max(0, this.generationCadence.tradeThreshold - this.totalTradesSinceGeneration)
 
     const h = Math.floor(timeUntilGen / (1000 * 60 * 60))
     const m = Math.floor((timeUntilGen % (1000 * 60 * 60)) / (1000 * 60))
@@ -458,7 +511,8 @@ export class Orchestrator {
       ' | Pop: ' + strategies.length + ' (' + paper.length + ' paper, ' + live.length + ' live)' +
       ' | Trades: ' + this.totalTrades +
       ' | Open: ' + openCount +
-      ' | Best fitness: ' + bestFitness.toFixed(3) +
+      ' | Best tier: ' + (bestAssessment ? bestAssessment.tier.toUpperCase() : 'N/A') +
+      ' | Best growth: ' + (bestAssessment ? bestAssessment.metrics.bankrollGrowthPct.toFixed(1) : '0.0') + '%' +
       ' | Bankroll: ' + balance.toFixed(4) + ' SOL' +
       (inSurvivalMode ? ' | ⚠ SURVIVAL MODE' : '')
     )
@@ -466,7 +520,11 @@ export class Orchestrator {
     if (scored.length > 0) {
       const top3 = scored.slice(0, 3)
       const top3Str = top3.map((f) =>
-        f.strategyId.slice(-8) + ' (score: ' + f.score.toFixed(2) + ', ' + f.tradeCount + ' trades, best: +' + (f.bestTradeReturn * 100).toFixed(0) + '%)'
+        f.strategyId.slice(-8) +
+        ' (' + f.tier +
+        ', growth: ' + f.metrics.bankrollGrowthPct.toFixed(1) + '%' +
+        ', mig: ' + f.metrics.migrationShare.toFixed(0) + '%' +
+        ', best: +' + f.metrics.bestTradePct.toFixed(0) + '%)'
       ).join(' | ')
       console.log('[Darwin] Top 3: ' + top3Str)
     }
@@ -476,5 +534,9 @@ export class Orchestrator {
     console.log(
       '[Darwin] Next generation in: ' + h + 'h ' + m + 'm (or after ' + tradesUntilGen + ' more trades)' + drawdownStr
     )
+  }
+
+  private logSignalSkip(signal: MarketSignal, reason: string, details: Record<string, any> = {}): void {
+    this.logger.logSignalSkip(signal, reason, details)
   }
 }

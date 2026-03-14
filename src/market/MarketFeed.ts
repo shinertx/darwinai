@@ -11,6 +11,10 @@ const PUMP_CORE_PROGRAM_ID = '6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P'
 const PUMP_AMM_PROGRAM_ID = 'pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA'
 const PRICE_HISTORY_MAX = 20
 
+export function getSignalCooldownKey(signal: Pick<MarketSignal, 'mint' | 'type'>): string {
+  return `${signal.mint}:${signal.type}`
+}
+
 export class MarketFeed extends EventEmitter {
   private ammSignalCount = 0
   private ammRateBucketStart = Date.now()
@@ -85,8 +89,8 @@ export class MarketFeed extends EventEmitter {
 
     this.cleanupHandle = setInterval(() => {
       const now = Date.now()
-      for (const [mint, ts] of this.recentSignals) {
-        if (now - ts > this.signalCooldownMs * 2) this.recentSignals.delete(mint)
+      for (const [key, ts] of this.recentSignals) {
+        if (now - ts > this.signalCooldownMs * 2) this.recentSignals.delete(key)
       }
     }, 60000)
 
@@ -404,9 +408,22 @@ export class MarketFeed extends EventEmitter {
 
   private emitSignal(signal: MarketSignal) {
     const now = Date.now()
-    const last = this.recentSignals.get(signal.mint) || 0
-    if (now - last < this.signalCooldownMs) return
-    this.recentSignals.set(signal.mint, now)
+    const key = getSignalCooldownKey(signal)
+    const last = this.recentSignals.get(key) || 0
+    if (now - last < this.signalCooldownMs) {
+      this.emit('signal_skipped', {
+        signal,
+        reason: 'market_feed_cooldown',
+        details: {
+          cooldownKey: key,
+          cooldownMs: this.signalCooldownMs,
+          ageMs: now - last,
+        },
+        timestamp: now,
+      })
+      return
+    }
+    this.recentSignals.set(key, now)
     this.lastSignalAt = now
 
     // Add price point if we have price info
