@@ -55,9 +55,13 @@ TARGET_APP_OUT_LOG = Path.home() / ".pm2" / "logs" / f"{TARGET_APP}-out.log"
 TARGET_APP_ERR_LOG = Path.home() / ".pm2" / "logs" / f"{TARGET_APP}-error.log"
 
 EXPERIMENT_MIN = int(os.getenv("AUTORESEARCH_EXPERIMENT_MINUTES", "8"))
-MIN_TRADES = int(os.getenv("AUTORESEARCH_MIN_TRADES", "8"))
+MIN_TRADES = int(os.getenv("AUTORESEARCH_MIN_TRADES", "30"))
 IMPROVE_THRESH = float(os.getenv("AUTORESEARCH_IMPROVE_THRESHOLD", "1.05"))
 MAX_EXPERIMENTS = int(os.getenv("AUTORESEARCH_MAX_EXPERIMENTS", "200"))
+VALIDATION_WINDOWS = max(1, int(os.getenv("AUTORESEARCH_VALIDATION_WINDOWS", "2")))
+VALIDATION_MIN_FACTOR = float(os.getenv("AUTORESEARCH_VALIDATION_MIN_FACTOR", "0.95"))
+MAX_EVAL_WAIT_CYCLES = max(1, int(os.getenv("AUTORESEARCH_MAX_WAIT_CYCLES", "4")))
+EVAL_WAIT_MINUTES = max(1, int(os.getenv("AUTORESEARCH_WAIT_MINUTES", "10")))
 MODEL = os.getenv("OPENAI_MODEL", "gpt-5.3-codex")
 REASONING_EFFORT = os.getenv("OPENAI_REASONING_EFFORT", "medium").strip().lower()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
@@ -230,19 +234,97 @@ HYPOTHESIS: <your reasoning>
 
 
 def eval_score(since_ts_ms: int) -> dict:
-    for _ in range(3):
+    for _ in range(MAX_EVAL_WAIT_CYCLES):
         result = run(f"python3 eval.py {since_ts_ms}")
         try:
             data = json.loads(result.stdout)
             if data["trades"] >= MIN_TRADES:
                 return data
-            log.info("  Only %s paper trades so far, waiting 10 more minutes...", data["trades"])
-            time.sleep(600)
+            log.info(
+                "  Only %s paper trades so far, waiting %s more minutes...",
+                data["trades"],
+                EVAL_WAIT_MINUTES,
+            )
+            time.sleep(EVAL_WAIT_MINUTES * 60)
         except Exception as exc:
             log.error("  eval parse error: %s | stdout=%s", exc, result.stdout[:200])
             time.sleep(60)
 
     return json.loads(run(f"python3 eval.py {since_ts_ms}").stdout)
+
+
+def aggregate_results(results: list[dict]) -> dict:
+    if not results:
+        return {
+            "score": -99.0,
+            "trades": 0,
+            "win_rate": 0,
+            "profit_factor": 0,
+            "avg_loss_pct": 0,
+            "avg_winner_pct": 0,
+            "best_trade_pct": 0,
+            "max_drawdown_sol": 0,
+            "total_pnl_sol": 0,
+            "gross_wins_sol": 0,
+            "gross_losses_sol": 0,
+            "no_pump_bail_pct": 0,
+            "no_pump_bail_count": 0,
+            "winners": 0,
+            "losers": 0,
+            "migration_trades": 0,
+            "migration_winners": 0,
+            "migration_win_rate": 0,
+            "windows": 0,
+        }
+
+    total_trades = sum(int(result.get("trades", 0)) for result in results)
+    total_winners = sum(int(result.get("winners", 0)) for result in results)
+    total_losers = sum(int(result.get("losers", 0)) for result in results)
+    total_pnl = sum(float(result.get("total_pnl_sol", 0)) for result in results)
+    gross_wins = sum(float(result.get("gross_wins_sol", 0)) for result in results)
+    gross_losses = sum(float(result.get("gross_losses_sol", 0)) for result in results)
+    no_pump_count = sum(int(result.get("no_pump_bail_count", 0)) for result in results)
+    migration_trades = sum(int(result.get("migration_trades", 0)) for result in results)
+    migration_winners = sum(int(result.get("migration_winners", 0)) for result in results)
+    weighted_score = sum(float(result.get("score", -99)) * int(result.get("trades", 0)) for result in results)
+    loss_pct_sum = sum(float(result.get("avg_loss_pct", 0)) * int(result.get("losers", 0)) for result in results)
+    winner_pct_sum = sum(float(result.get("avg_winner_pct", 0)) * int(result.get("winners", 0)) for result in results)
+
+    profit_factor = min(gross_wins / gross_losses, 5.0) if gross_losses > 0 else (2.0 if gross_wins > 0 else 0.0)
+    win_rate = (total_winners / total_trades) * 100 if total_trades else 0
+    no_pump_pct = (no_pump_count / total_trades) * 100 if total_trades else 0
+    migration_win_rate = (migration_winners / migration_trades) * 100 if migration_trades else 0
+
+    return {
+        "score": round(weighted_score / total_trades, 4) if total_trades else -99.0,
+        "trades": total_trades,
+        "win_rate": round(win_rate, 1),
+        "profit_factor": round(profit_factor, 3),
+        "avg_loss_pct": round(loss_pct_sum / total_losers, 2) if total_losers else 0,
+        "avg_winner_pct": round(winner_pct_sum / total_winners, 2) if total_winners else 0,
+        "best_trade_pct": round(max(float(result.get("best_trade_pct", 0)) for result in results), 2),
+        "max_drawdown_sol": round(max(float(result.get("max_drawdown_sol", 0)) for result in results), 6),
+        "total_pnl_sol": round(total_pnl, 6),
+        "gross_wins_sol": round(gross_wins, 6),
+        "gross_losses_sol": round(gross_losses, 6),
+        "no_pump_bail_pct": round(no_pump_pct, 1),
+        "no_pump_bail_count": no_pump_count,
+        "winners": total_winners,
+        "losers": total_losers,
+        "migration_trades": migration_trades,
+        "migration_winners": migration_winners,
+        "migration_win_rate": round(migration_win_rate, 1),
+        "windows": len(results),
+    }
+
+
+def collect_window_metrics(label: str) -> dict:
+    window_start = int(time.time() * 1000)
+    log.info("  [%s] Waiting %s minutes for fresh paper trades...", label, EXPERIMENT_MIN)
+    time.sleep(EXPERIMENT_MIN * 60)
+    result = eval_score(window_start)
+    log.info("  [%s] Metrics: %s", label, result)
+    return result
 
 
 def rebuild() -> bool:
@@ -369,6 +451,8 @@ def main() -> int:
     log.info("Reasoning effort: %s", REASONING_EFFORT or "default")
     log.info("Target app: %s", TARGET_APP)
     log.info("Experiment budget: %s minutes each", EXPERIMENT_MIN)
+    log.info("Minimum trades per window: %s", MIN_TRADES)
+    log.info("Validation windows per keeper: %s", VALIDATION_WINDOWS)
     log.info("Tunable files: %s", ", ".join(TUNABLE_FILES))
     log.info("=" * 60)
 
@@ -378,10 +462,7 @@ def main() -> int:
         log.error("Failed to start healthy paper target app %s.", TARGET_APP)
         return 1
 
-    baseline_start = int(time.time() * 1000)
-    log.info("[BASELINE] Waiting %s minutes for paper baseline...", EXPERIMENT_MIN)
-    time.sleep(EXPERIMENT_MIN * 60)
-    baseline = eval_score(baseline_start)
+    baseline = collect_window_metrics("BASELINE")
     log.info("  BASELINE: %s", baseline)
 
     for experiment_num in range(1, MAX_EXPERIMENTS + 1):
@@ -459,17 +540,42 @@ def main() -> int:
                 return 1
             continue
 
-        exp_start = int(time.time() * 1000)
-        log.info("  %s running... waiting %s minutes", TARGET_APP, EXPERIMENT_MIN)
-        time.sleep(EXPERIMENT_MIN * 60)
-
-        result = eval_score(exp_start)
+        window_results = [collect_window_metrics("WINDOW 1")]
+        result = aggregate_results(window_results)
         new_score = result.get("score", -99)
         old_score = baseline.get("score", 0)
+
         improved = new_score >= old_score * IMPROVE_THRESH
+        if improved and VALIDATION_WINDOWS > 1:
+            log.info(
+                "  Candidate cleared the first window. Running %s validation window(s)...",
+                VALIDATION_WINDOWS - 1,
+            )
+            for window_num in range(2, VALIDATION_WINDOWS + 1):
+                window_result = collect_window_metrics(f"WINDOW {window_num}")
+                window_results.append(window_result)
+                result = aggregate_results(window_results)
+                new_score = result.get("score", -99)
+                validation_floor = old_score * VALIDATION_MIN_FACTOR
+                if window_result.get("score", -99) < validation_floor:
+                    log.info(
+                        "  Validation window %s fell below floor %.4f (got %.4f).",
+                        window_num,
+                        validation_floor,
+                        window_result.get("score", -99),
+                    )
+                    break
+
+            improved = (
+                new_score >= old_score * IMPROVE_THRESH
+                and all(
+                    window.get("score", -99) >= old_score * VALIDATION_MIN_FACTOR
+                    for window in window_results[1:]
+                )
+            )
 
         log.info(
-            "  Score: %.4f vs baseline %.4f -> %s",
+            "  Aggregate score: %.4f vs baseline %.4f -> %s",
             new_score,
             old_score,
             "KEEPER" if improved else "REVERT",
@@ -491,6 +597,7 @@ def main() -> int:
             "score_after": new_score,
             "kept": improved,
             "metrics": result,
+            "windows": window_results,
         })
         save_history(history)
 

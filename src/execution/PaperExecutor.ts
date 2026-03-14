@@ -21,6 +21,29 @@ function calcSlippage(positionSol: number, poolLiqSol: number): number {
   return 0.01 + Math.random() * 0.02
 }
 
+function calcEntryDelayImpact(signal: MarketSignal, effectiveDelayMs: number): number {
+  const delayFactor = Math.max(0.75, effectiveDelayMs / ENTRY_DELAY_MS)
+  const liquidityFactor = signal.liquiditySol > 0
+    ? Math.min(2.0, Math.max(0.9, 70 / Math.max(signal.liquiditySol, 5)))
+    : 1.4
+
+  let basePct = 0.002
+  let jitterPct = 0.006
+
+  if (signal.type === 'migration') {
+    basePct = 0.008
+    jitterPct = 0.018
+  } else if (signal.type === 'whale_buy') {
+    basePct = 0.004
+    jitterPct = 0.010
+  } else if (signal.type === 'new_pool') {
+    basePct = 0.005
+    jitterPct = 0.012
+  }
+
+  return Math.min((basePct + Math.random() * jitterPct) * delayFactor * liquidityFactor, 0.12)
+}
+
 // How long after position open before price-dependent exits can fire.
 // The entry price is injected into the feed immediately, so we need to
 // wait at least one full poll cycle (3s) before treating price data as
@@ -39,6 +62,9 @@ export class PaperExecutor {
     sizeSol: number,
     entryPrice: number
   ): Position {
+    const signalAgeMs = Math.max(0, Date.now() - signal.timestamp)
+    const effectiveDelayMs = ENTRY_DELAY_MS + Math.min(signalAgeMs, 1500)
+    const entryDelayImpact = calcEntryDelayImpact(signal, effectiveDelayMs)
     const position: Position = {
       id: uuidv4(),
       strategyId,
@@ -47,7 +73,7 @@ export class PaperExecutor {
       pool: signal.pool,
       entryPriceSol: entryPrice,
       sizeSol,
-      openedAt: Date.now(),
+      openedAt: Date.now() + ENTRY_DELAY_MS,
       peakPriceSol: entryPrice,
       lowestPriceSol: entryPrice,
       isPaper: true,
@@ -61,8 +87,8 @@ export class PaperExecutor {
     }
     // Deduct entry transaction fee from position size
     position.sizeSol = Math.max(0, position.sizeSol - TX_FEE_SOL)
-    // Apply additional real-world slippage on entry price
-    position.entryPriceSol = position.entryPriceSol * (1 + EXTRA_SLIPPAGE)
+    // Entry fills are both delayed and worse than the quoted signal price.
+    position.entryPriceSol = position.entryPriceSol * (1 + EXTRA_SLIPPAGE + entryDelayImpact)
     position.peakPriceSol  = position.entryPriceSol
     position.lowestPriceSol = position.entryPriceSol
     this.openPositions.set(position.id, position)
@@ -77,6 +103,8 @@ export class PaperExecutor {
     const now = Date.now()
 
     for (const [posId, pos] of this.openPositions) {
+      if (now < pos.openedAt) continue
+
       const genome = genomes.get(pos.genomeId)
       if (!genome) continue
 
