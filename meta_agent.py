@@ -238,24 +238,53 @@ HYPOTHESIS: <your reasoning>
 
 
 def eval_window(since_ts_ms: int) -> dict:
+    def parse_assessment_output(result: subprocess.CompletedProcess[str]) -> dict:
+        stdout = (result.stdout or "").strip()
+        stderr = (result.stderr or "").strip()
+
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"eval command failed with exit {result.returncode} | "
+                f"stdout={stdout[:400]} | stderr={stderr[:400]}"
+            )
+
+        if not stdout:
+            raise RuntimeError(f"eval returned empty stdout | stderr={stderr[:400]}")
+
+        payload = stdout
+        if not payload.startswith("{"):
+            match = re.search(r"(\{.*\})", payload, re.DOTALL)
+            if not match:
+                raise RuntimeError(f"eval stdout did not contain JSON | stdout={payload[:400]}")
+            payload = match.group(1)
+
+        data = json.loads(payload)
+        metrics = data.get("metrics") if isinstance(data.get("metrics"), dict) else {}
+        trade_count = data.get("trades", data.get("trade_count", metrics.get("tradeCount", 0)))
+        data["_trade_count"] = int(trade_count or 0)
+        return data
+
     for _ in range(MAX_EVAL_WAIT_CYCLES):
         result = run(f"python3 eval.py {since_ts_ms}")
         try:
-            data = json.loads(result.stdout)
-            if int(data.get("trades", 0)) >= MIN_TRADES:
+            data = parse_assessment_output(result)
+            if data["_trade_count"] >= MIN_TRADES:
+                data.pop("_trade_count", None)
                 return data
             log.info(
                 "  Only %s paper trades so far, waiting %s more minutes...",
-                data.get("trades", 0),
+                data["_trade_count"],
                 EVAL_WAIT_MINUTES,
             )
             time.sleep(EVAL_WAIT_MINUTES * 60)
         except Exception as exc:
-            log.error("  eval parse error: %s | stdout=%s", exc, result.stdout[:400])
+            log.error("  eval parse error: %s", exc)
             time.sleep(60)
 
     result = run(f"python3 eval.py {since_ts_ms}")
-    return json.loads(result.stdout)
+    data = parse_assessment_output(result)
+    data.pop("_trade_count", None)
+    return data
 
 
 def collect_window_metrics(label: str) -> dict:
