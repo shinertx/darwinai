@@ -241,24 +241,34 @@ def eval_window(since_ts_ms: int) -> dict:
     def parse_assessment_output(result: subprocess.CompletedProcess[str]) -> dict:
         stdout = (result.stdout or "").strip()
         stderr = (result.stderr or "").strip()
+        failure_message = None
 
         if result.returncode != 0:
-            raise RuntimeError(
+            failure_message = (
                 f"eval command failed with exit {result.returncode} | "
                 f"stdout={stdout[:400]} | stderr={stderr[:400]}"
             )
 
-        if not stdout:
-            raise RuntimeError(f"eval returned empty stdout | stderr={stderr[:400]}")
+        def decode_payload(raw: str, label: str) -> dict | None:
+            if not raw:
+                return None
+            payload = raw
+            if not payload.startswith("{"):
+                match = re.search(r"(\{.*\})", payload, re.DOTALL)
+                if not match:
+                    return None
+                payload = match.group(1)
+            try:
+                return json.loads(payload)
+            except json.JSONDecodeError:
+                return None
 
-        payload = stdout
-        if not payload.startswith("{"):
-            match = re.search(r"(\{.*\})", payload, re.DOTALL)
-            if not match:
-                raise RuntimeError(f"eval stdout did not contain JSON | stdout={payload[:400]}")
-            payload = match.group(1)
+        data = decode_payload(stdout, "stdout") or decode_payload(stderr, "stderr")
+        if data is None:
+            if failure_message:
+                raise RuntimeError(failure_message)
+            raise RuntimeError(f"eval returned no parseable JSON | stdout={stdout[:400]} | stderr={stderr[:400]}")
 
-        data = json.loads(payload)
         metrics = data.get("metrics") if isinstance(data.get("metrics"), dict) else {}
         trade_count = data.get("trades", data.get("trade_count", metrics.get("tradeCount", 0)))
         data["_trade_count"] = int(trade_count or 0)
