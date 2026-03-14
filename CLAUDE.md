@@ -41,6 +41,7 @@ RPC_URLS=...
 WSS_URL=...
 STARTING_BALANCE_SOL=1.0
 DARWIN_POP_SIZE=16
+DARWIN_RESEARCH_MODE=false
 DARWIN_GENERATION_INTERVAL_MIN=60
 DARWIN_GENERATION_TRADE_THRESHOLD=75
 MIGRATION_MIN_LIQUIDITY_SOL=25
@@ -67,6 +68,8 @@ AUTORESEARCH_TARGET_APP=darwin-paper
 AUTORESEARCH_MIN_TRADES=30
 AUTORESEARCH_VALIDATION_WINDOWS=2
 ```
+
+`darwin-paper` under PM2 runs with research cadence defaults (`DARWIN_RESEARCH_MODE=true`, `20m` / `25` trades) so generation cycles can happen within autoresearch windows.
 
 Legacy `PAPER_TRADING` and `PAPER_TRADE` values still map into the new mode logic temporarily, but Darwin warns until `DARWIN_MODE` is set explicitly.
 

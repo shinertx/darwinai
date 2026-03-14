@@ -86,8 +86,12 @@ export class Orchestrator {
     console.log(
       '[Darwin] Generation cadence: ' +
       this.generationCadence.intervalMin + 'm or ' +
-      this.generationCadence.tradeThreshold + ' trades'
+      this.generationCadence.tradeThreshold + ' trades' +
+      (this.generationCadence.profile === 'research' ? ' [research]' : '')
     )
+    if (this.generationCadence.profile === 'research') {
+      console.log('[Darwin] Research cadence active: faster generation cycles for autoresearch windows.')
+    }
     if (this.liveMode) {
       console.log('[Darwin] Live trade size: ' + parseFloat(process.env.LIVE_TRADE_SIZE_SOL || '0.001').toFixed(4) + ' SOL')
     }

@@ -34,6 +34,14 @@ export interface MissionConfig {
   }
 }
 
+export interface GenerationCadence {
+  intervalMin: number
+  intervalMs: number
+  tradeThreshold: number
+  profile: 'standard' | 'research'
+  source: 'defaults' | 'research_defaults' | 'explicit'
+}
+
 export const MISSION_CONFIG: MissionConfig = {
   profitFactorCap: 10,
   hardFail: {
@@ -90,19 +98,34 @@ export function getStartingBalanceSol(env: NodeJS.ProcessEnv = process.env): num
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 1.0
 }
 
-export function resolveGenerationCadence(env: NodeJS.ProcessEnv = process.env): {
-  intervalMin: number
-  intervalMs: number
-  tradeThreshold: number
-} {
-  const parsedInterval = parseInt(env.DARWIN_GENERATION_INTERVAL_MIN || '60', 10)
-  const parsedTrades = parseInt(env.DARWIN_GENERATION_TRADE_THRESHOLD || '75', 10)
-  const intervalMin = Number.isFinite(parsedInterval) && parsedInterval > 0 ? parsedInterval : 60
-  const tradeThreshold = Number.isFinite(parsedTrades) && parsedTrades > 0 ? parsedTrades : 75
+function parseBooleanFlag(value: string | undefined): boolean {
+  if (!value) return false
+  const normalized = value.trim().toLowerCase()
+  return normalized === '1' || normalized === 'true' || normalized === 'yes' || normalized === 'on'
+}
+
+export function resolveGenerationCadence(env: NodeJS.ProcessEnv = process.env): GenerationCadence {
+  const researchMode = parseBooleanFlag(env.DARWIN_RESEARCH_MODE)
+  const explicitInterval = env.DARWIN_GENERATION_INTERVAL_MIN
+  const explicitTrades = env.DARWIN_GENERATION_TRADE_THRESHOLD
+  const defaultInterval = researchMode ? 20 : 60
+  const defaultTrades = researchMode ? 25 : 75
+  const parsedInterval = parseInt(explicitInterval || String(defaultInterval), 10)
+  const parsedTrades = parseInt(explicitTrades || String(defaultTrades), 10)
+  const intervalMin = Number.isFinite(parsedInterval) && parsedInterval > 0 ? parsedInterval : defaultInterval
+  const tradeThreshold = Number.isFinite(parsedTrades) && parsedTrades > 0 ? parsedTrades : defaultTrades
+  const source =
+    explicitInterval || explicitTrades
+      ? 'explicit'
+      : researchMode
+        ? 'research_defaults'
+        : 'defaults'
 
   return {
     intervalMin,
     intervalMs: intervalMin * 60 * 1000,
     tradeThreshold,
+    profile: researchMode ? 'research' : 'standard',
+    source,
   }
 }

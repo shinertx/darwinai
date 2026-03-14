@@ -6,6 +6,9 @@ module.exports = {
       cwd: __dirname,
       env: {
         DARWIN_MODE: 'paper',
+        DARWIN_RESEARCH_MODE: process.env.DARWIN_RESEARCH_MODE || 'true',
+        DARWIN_GENERATION_INTERVAL_MIN: process.env.DARWIN_GENERATION_INTERVAL_MIN || '20',
+        DARWIN_GENERATION_TRADE_THRESHOLD: process.env.DARWIN_GENERATION_TRADE_THRESHOLD || '25',
       },
     },
     {

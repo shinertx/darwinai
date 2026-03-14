@@ -53,11 +53,11 @@ Selection uses hard-fail gates first, then `tier_a` / `tier_b` / `tier_c`, then 
 1. Copy `.env.example` to `.env` and fill in the RPC, websocket, and API credentials.
 2. Install dependencies with `npm install`.
 3. Build with `npm run build`.
-4. Start paper mode with `npm run start:paper` or `pm2 start ecosystem.config.cjs --only darwin-paper`.
+4. Start paper mode with `npm run start:paper`, `npm run start:paper:research`, or `pm2 start ecosystem.config.cjs --only darwin-paper`.
 
 ## PM2 Profiles
 
-- `darwin-paper`: default trading app for paper mode
+- `darwin-paper`: default paper/research app; the PM2 profile enables research cadence (`20m` or `25` trades) so Darwin can evolve inside autoresearch windows
 - `darwin-live`: live trading app; defined but stopped by default
 - `darwin-autoresearch`: OpenAI-driven experiment loop; targets `darwin-paper` only
 
@@ -93,6 +93,8 @@ It uses the OpenAI Responses API with:
 - `AUTORESEARCH_TARGET_APP=darwin-paper`
 
 By default, autoresearch now waits for at least `30` paper trades per window and validates keeper candidates across `2` consecutive paper windows before committing them.
+
+When `DARWIN_RESEARCH_MODE=true`, Darwin uses research-friendly generation defaults of `20` minutes or `25` trades unless you override them explicitly. Standard paper/live defaults remain `60` minutes or `75` trades.
 
 Candidates only stick when:
 

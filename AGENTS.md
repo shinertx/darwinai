@@ -29,6 +29,7 @@
 - Use `pm2 start ecosystem.config.cjs --only darwin-paper` for paper mode.
 - Use `pm2 start ecosystem.config.cjs --only darwin-autoresearch` only after `darwin-paper` is healthy.
 - Start `darwin-live` manually and only after paper mode has been validated.
+- `darwin-paper` under PM2 is research-tuned by default (`DARWIN_RESEARCH_MODE=true`, `20m` / `25` trades) so generation cycles can occur during autoresearch experiments.
 
 ## Docs
 

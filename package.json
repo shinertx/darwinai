@@ -7,6 +7,7 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "start:paper": "DARWIN_MODE=paper node dist/index.js",
+    "start:paper:research": "DARWIN_MODE=paper DARWIN_RESEARCH_MODE=true DARWIN_GENERATION_INTERVAL_MIN=20 DARWIN_GENERATION_TRADE_THRESHOLD=25 node dist/index.js",
     "start:live": "DARWIN_MODE=live node dist/index.js",
     "dev": "ts-node src/index.ts",
     "eval-window": "node dist/cli/eval-window.js",
