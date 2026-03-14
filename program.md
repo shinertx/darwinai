@@ -19,7 +19,7 @@ Do NOT optimise for paper score at the expense of real-world viability.
 Darwin is an evolutionary trading bot on Solana PumpSwap. It runs 16 strategy "genomes" simultaneously in paper trading mode against real live market signals. A genetic algorithm evolves genomes across generations — fit ones breed, unfit ones die.
 
 ## What you are optimizing
-You are a code agent. Each experiment you make ONE targeted change to ONE TypeScript source file, rebuild Darwin, let it run for 8 minutes, then measure whether the change improved the eval score.
+You are a code agent. Each experiment you make ONE targeted change to ONE TypeScript source file, rebuild Darwin, let it run for an 8-minute paper window, then measure whether the change improved the eval score. Keeper candidates must now survive 30+ paper trades per window and hold up across a second validation window before they stick.
 
 ## The eval score (higher = better)
 ```
@@ -95,6 +95,7 @@ Paper trading now simulates:
 - 0.002 SOL fee per open + 0.002 SOL fee per close
 - 18% failed transaction rate (Solana congestion)
 - 1.5% extra slippage on entry vs quoted price
+- a delayed entry fill that worsens fast migration prices before the position becomes active
 This means a strategy needs GENUINE edge to show positive score.
 
 ## Rules

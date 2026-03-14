@@ -5,16 +5,16 @@ Usage: python3 eval.py <since_timestamp_ms>
 Outputs JSON with composite score (higher = better)
 """
 import sqlite3, json, sys, os
-from pathlib import Path
 
 DB_PATH = os.path.join(os.path.dirname(__file__), 'darwin.db')
 
 def compute_score(since_ts_ms):
     conn = sqlite3.connect(DB_PATH)
     trades = conn.execute("""
-        SELECT pnl_sol, pnl_pct, exit_reason, hold_ms, signal_type
+        SELECT pnl_sol, pnl_pct, exit_reason, hold_ms, signal_type, closed_at
         FROM trades
         WHERE closed_at > ? AND is_paper = 1
+        ORDER BY closed_at ASC
     """, (since_ts_ms,)).fetchall()
     conn.close()
 
@@ -25,7 +25,19 @@ def compute_score(since_ts_ms):
             "reason": f"insufficient_trades (need 10, got {len(trades)})",
             "win_rate": 0, "profit_factor": 0,
             "avg_loss_pct": 0, "total_pnl_sol": 0,
-            "no_pump_bail_pct": 0, "migration_pct": 0
+            "avg_winner_pct": 0,
+            "best_trade_pct": 0,
+            "max_drawdown_sol": 0,
+            "gross_wins_sol": 0,
+            "gross_losses_sol": 0,
+            "no_pump_bail_pct": 0,
+            "no_pump_bail_count": 0,
+            "migration_pct": 0,
+            "migration_trades": 0,
+            "migration_winners": 0,
+            "migration_win_rate": 0,
+            "winners": 0,
+            "losers": 0,
         }
 
     winners = [t for t in trades if t[0] > 0]
@@ -36,10 +48,20 @@ def compute_score(since_ts_ms):
     gross_losses  = abs(sum(t[0] for t in losers))
     profit_factor = min(gross_wins / gross_losses, 5.0) if gross_losses > 0 else 2.0
     avg_loss_pct  = (sum(t[1] for t in losers) / len(losers) * 100) if losers else 0
+    avg_winner_pct = (sum(t[1] for t in winners) / len(winners) * 100) if winners else 0
+    best_trade_pct = max((t[1] for t in trades), default=0) * 100
 
     no_pump_count = sum(1 for t in trades if t[2] == 'no_pump_bail')
     no_pump_pct   = no_pump_count / len(trades)
     total_pnl     = sum(t[0] for t in trades)
+    running_pnl = 0.0
+    peak_pnl = 0.0
+    max_drawdown_sol = 0.0
+
+    for trade in trades:
+        running_pnl += trade[0]
+        peak_pnl = max(peak_pnl, running_pnl)
+        max_drawdown_sol = max(max_drawdown_sol, peak_pnl - running_pnl)
 
     # Composite — higher is better
     score = (
@@ -59,6 +81,7 @@ def compute_score(since_ts_ms):
     # Migration-specific stats
     migration = [t for t in trades if len(t) > 4 and t[4] == "migration"]
     mig_wins  = [t for t in migration if t[0] > 0]
+    mig_winners = len(mig_wins)
     mig_win_rate = round(len(mig_wins)/len(migration)*100,1) if migration else 0
 
     return {
@@ -67,11 +90,18 @@ def compute_score(since_ts_ms):
         "win_rate":         round(win_rate * 100, 1),
         "profit_factor":    round(profit_factor, 3),
         "avg_loss_pct":     round(avg_loss_pct, 2),
+        "avg_winner_pct":   round(avg_winner_pct, 2),
+        "best_trade_pct":   round(best_trade_pct, 2),
+        "max_drawdown_sol": round(max_drawdown_sol, 6),
         "total_pnl_sol":    round(total_pnl, 6),
+        "gross_wins_sol":   round(gross_wins, 6),
+        "gross_losses_sol": round(gross_losses, 6),
         "no_pump_bail_pct": round(no_pump_pct * 100, 1),
+        "no_pump_bail_count": no_pump_count,
         "winners":          len(winners),
         "losers":           len(losers),
         "migration_trades": len(migration),
+        "migration_winners": mig_winners,
         "migration_win_rate": mig_win_rate,
     }
 

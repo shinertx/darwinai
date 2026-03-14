@@ -70,6 +70,8 @@ It uses the OpenAI Responses API with:
 - `OPENAI_REASONING_EFFORT`
 - `AUTORESEARCH_TARGET_APP=darwin-paper`
 
+By default, autoresearch now waits for at least `30` paper trades per window and validates keeper candidates across `2` consecutive paper windows before committing them.
+
 The autoresearch loop never stops or restarts `darwin-live`.
 
 ## Ops Scripts

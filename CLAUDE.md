@@ -62,6 +62,8 @@ OPENAI_API_KEY=...
 OPENAI_MODEL=gpt-5.3-codex
 OPENAI_REASONING_EFFORT=medium
 AUTORESEARCH_TARGET_APP=darwin-paper
+AUTORESEARCH_MIN_TRADES=30
+AUTORESEARCH_VALIDATION_WINDOWS=2
 ```
 
 Legacy `PAPER_TRADING` and `PAPER_TRADE` values still map into the new mode logic temporarily, but Darwin warns until `DARWIN_MODE` is set explicitly.
