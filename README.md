@@ -15,6 +15,19 @@ Darwin is an evolutionary Solana trading organism that listens to PumpSwap marke
 
 Legacy `PAPER_TRADING` and `PAPER_TRADE` values are still read for one transition cycle, but Darwin will warn until `DARWIN_MODE` is set explicitly.
 
+## Liquidity Guards
+
+Darwin now uses both hard signal floors and a dynamic pool-depth guard:
+
+- `MIGRATION_MIN_LIQUIDITY_SOL=25`
+- `NEW_POOL_MIN_LIQUIDITY_SOL=30`
+- `AMM_ACTIVITY_MIN_LIQUIDITY_SOL=50`
+- `WHALE_BUY_MIN_LIQUIDITY_SOL=50`
+- `DARWIN_TARGET_ENTRY_POOL_PCT=0.03`
+- `DARWIN_MIN_MEANINGFUL_FILL_RATIO=0.5`
+
+That means Darwin skips pools that are obviously too thin, and it also skips signals where the pool cannot support a meaningful fraction of the intended position size.
+
 ## Quick Start
 
 1. Copy `.env.example` to `.env` and fill in the RPC, websocket, and API credentials.

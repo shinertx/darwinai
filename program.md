@@ -76,6 +76,15 @@ Controls what SIGNALS pass through. Current state:
 - rate limit: 10/min
 - Untried levers: separate migration signal cooldown, completely disable amm_activity for low-liquidity pools, add time-of-day filtering
 
+### Liquidity policy
+- Hard signal floors now apply before Darwin evaluates entries:
+  - migration: 25 SOL
+  - new_pool: 30 SOL
+  - amm_activity: 50 SOL
+  - whale_buy: 50 SOL
+- Darwin also skips signals if the pool is too shallow to support a meaningful fraction of the intended position size.
+- Do not weaken these guards unless the data clearly shows a better live-scalable rule.
+
 ## Signal types
 - `migration`: Pump.fun token completing bonding curve → PumpSwap AMM. 2-6/hour. **This is where ALL the alpha is.** Average +200% on winning trades.
 - `amm_activity`: Any swap >5 SOL. Very frequent. Low predictive value. Drag on performance.

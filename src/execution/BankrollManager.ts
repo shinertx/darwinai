@@ -31,6 +31,21 @@ export class BankrollManager {
     maxPoolPct: number,
     signalType: 'migration' | 'whale_buy' | 'new_pool' | 'amm_activity' = 'amm_activity'
   ): number {
+    return this.getSizingPlan(capitalPct, poolLiqSol, maxPoolPct, signalType).sizeSol
+  }
+
+  public getSizingPlan(
+    capitalPct: number,
+    poolLiqSol: number,
+    maxPoolPct: number,
+    signalType: 'migration' | 'whale_buy' | 'new_pool' | 'amm_activity' = 'amm_activity'
+  ): {
+    desiredSizeSol: number
+    cappedDesiredSizeSol: number
+    poolCapSol: number
+    sizeSol: number
+    signalMultiplier: number
+  } {
     const MAX_POSITION_SOL = 0.10
     // Signal-type multiplier: bet bigger on migrations, smaller on noisy amm swaps
     const signalMultiplier =
@@ -39,9 +54,18 @@ export class BankrollManager {
       signalType === 'new_pool'  ? 1.0 :
       0.2  // amm_activity
 
-    const desiredSize = this.balance * capitalPct * signalMultiplier
-    const poolCap = poolLiqSol * maxPoolPct
-    return Math.min(desiredSize, poolCap, this.balance * 0.95, MAX_POSITION_SOL)
+    const desiredSizeSol = this.balance * capitalPct * signalMultiplier
+    const cappedDesiredSizeSol = Math.min(desiredSizeSol, this.balance * 0.95, MAX_POSITION_SOL)
+    const poolCapSol = poolLiqSol * maxPoolPct
+    const sizeSol = Math.min(cappedDesiredSizeSol, poolCapSol)
+
+    return {
+      desiredSizeSol,
+      cappedDesiredSizeSol,
+      poolCapSol,
+      sizeSol,
+      signalMultiplier,
+    }
   }
 
   public recordTrade(trade: ClosedTrade): void {

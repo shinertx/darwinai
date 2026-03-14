@@ -24,6 +24,12 @@ const PRICE_POLL_INTERVAL_MS = 3000
 const priceCache: Map<string, { price: number; ts: number }> = new Map()
 const PRICE_CACHE_TTL = 3000
 const SOL_MINT = 'So11111111111111111111111111111111111111112'
+const AMM_ACTIVITY_MIN_LIQUIDITY_SOL = parseFloat(process.env.AMM_ACTIVITY_MIN_LIQUIDITY_SOL || '50')
+const WHALE_BUY_MIN_LIQUIDITY_SOL = parseFloat(process.env.WHALE_BUY_MIN_LIQUIDITY_SOL || '50')
+const NEW_POOL_MIN_LIQUIDITY_SOL = parseFloat(process.env.NEW_POOL_MIN_LIQUIDITY_SOL || '30')
+const MIGRATION_MIN_LIQUIDITY_SOL = parseFloat(process.env.MIGRATION_MIN_LIQUIDITY_SOL || '25')
+const TARGET_ENTRY_POOL_PCT = parseFloat(process.env.DARWIN_TARGET_ENTRY_POOL_PCT || '0.03')
+const MIN_MEANINGFUL_FILL_RATIO = parseFloat(process.env.DARWIN_MIN_MEANINGFUL_FILL_RATIO || '0.5')
 
 export class Orchestrator {
   private runtime: RuntimeConfig
@@ -149,8 +155,8 @@ export class Orchestrator {
       return  // Skip all non-migration signals when bleeding out
     }
 
-    // Quality gate: amm_activity requires at least 50 SOL pool liquidity
-    if (signal.type === 'amm_activity' && signal.liquiditySol < 50) {
+    // Hard floor: skip obviously too-thin pools before strategy evaluation.
+    if (signal.liquiditySol > 0 && signal.liquiditySol < this.getSignalLiquidityFloor(signal.type)) {
       return
     }
 
@@ -218,16 +224,20 @@ export class Orchestrator {
         const fired = strategy.evaluateSignal(signal, priceHistory)
 
         if (fired) {
-          // Size using BankrollManager (signal-type multiplier + hard cap)
-          const sizeSol = Math.min(
-            this.bankroll.getPositionSize(
-              strategy.genome.risk.capitalPct,
-              signal.liquiditySol,
-              strategy.genome.risk.maxPoolPct,
-              signal.type
-            ),
-            availableCapital * 0.95
+          const sizing = this.bankroll.getSizingPlan(
+            strategy.genome.risk.capitalPct,
+            signal.liquiditySol,
+            strategy.genome.risk.maxPoolPct,
+            signal.type
           )
+          const dynamicLiquidityFloor = this.getDynamicLiquidityFloor(signal.type, sizing.desiredSizeSol)
+          if (signal.liquiditySol > 0 && signal.liquiditySol < dynamicLiquidityFloor) continue
+
+          const fillRatio = sizing.desiredSizeSol > 0 ? sizing.poolCapSol / sizing.desiredSizeSol : 0
+          if (sizing.poolCapSol > 0 && fillRatio < MIN_MEANINGFUL_FILL_RATIO) continue
+
+          // Size using BankrollManager (signal-type multiplier + hard cap)
+          const sizeSol = Math.min(sizing.sizeSol, availableCapital * 0.95)
 
           if (sizeSol < 0.00001) continue  // floor: 10 lamports minimum
 
@@ -262,6 +272,23 @@ export class Orchestrator {
         console.error('[Darwin] Strategy evaluation error:', e)
       }
     }
+  }
+
+  private getSignalLiquidityFloor(signalType: MarketSignal['type']): number {
+    if (signalType === 'migration') return MIGRATION_MIN_LIQUIDITY_SOL
+    if (signalType === 'new_pool') return NEW_POOL_MIN_LIQUIDITY_SOL
+    if (signalType === 'whale_buy') return WHALE_BUY_MIN_LIQUIDITY_SOL
+    return AMM_ACTIVITY_MIN_LIQUIDITY_SOL
+  }
+
+  private getDynamicLiquidityFloor(signalType: MarketSignal['type'], desiredSizeSol: number): number {
+    const hardFloor = this.getSignalLiquidityFloor(signalType)
+    if (desiredSizeSol <= 0 || TARGET_ENTRY_POOL_PCT <= 0) return hardFloor
+
+    // We only want to learn on pools that could support the intended position
+    // without Darwin becoming an outsized share of the liquidity.
+    const dynamicFloor = desiredSizeSol / TARGET_ENTRY_POOL_PCT
+    return Math.max(hardFloor, dynamicFloor)
   }
 
   private tickPositions(): void {
