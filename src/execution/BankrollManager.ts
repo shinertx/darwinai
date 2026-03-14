@@ -3,6 +3,7 @@
 // ============================================================================
 
 import { ClosedTrade } from '../types'
+import { resolveRuntimeConfig } from '../config/runtime'
 
 export class BankrollManager {
   private balance: number
@@ -13,20 +14,34 @@ export class BankrollManager {
 
   constructor() {
     const startBalance = parseFloat(process.env.STARTING_BALANCE_SOL || '1.0')
+    const runtime = resolveRuntimeConfig(process.env)
     this.balance = startBalance
     this.peakBalance = startBalance
     this.startedAt = Date.now()
-    // Paper trading is virtual — allow deeper drawdown so evolution has runway
-    // Live mode uses strict 40% halt as per GENESIS spec
-    const isPaper = process.env.PAPER_TRADE !== 'false'
+    // Paper trading is virtual — allow deeper drawdown so evolution has runway.
+    // Live mode uses a strict halt to protect capital.
+    const isPaper = runtime.mode === 'paper'
     this.drawdownPausePct = isPaper ? 0.90 : 0.40
-    console.log('[BankrollManager] Starting balance: ' + startBalance.toFixed(4) + ' SOL')
+    console.log('[BankrollManager] Starting balance: ' + startBalance.toFixed(4) + ' SOL | mode=' + runtime.mode)
   }
 
-  public getPositionSize(capitalPct: number, poolLiqSol: number, maxPoolPct: number): number {
-    const desiredSize = this.balance * capitalPct
+  public getPositionSize(
+    capitalPct: number,
+    poolLiqSol: number,
+    maxPoolPct: number,
+    signalType: 'migration' | 'whale_buy' | 'new_pool' | 'amm_activity' = 'amm_activity'
+  ): number {
+    const MAX_POSITION_SOL = 0.10
+    // Signal-type multiplier: bet bigger on migrations, smaller on noisy amm swaps
+    const signalMultiplier =
+      signalType === 'migration' ? 3.0 :
+      signalType === 'whale_buy' ? 0.75 :
+      signalType === 'new_pool'  ? 1.0 :
+      0.2  // amm_activity
+
+    const desiredSize = this.balance * capitalPct * signalMultiplier
     const poolCap = poolLiqSol * maxPoolPct
-    return Math.min(desiredSize, poolCap, this.balance * 0.95)
+    return Math.min(desiredSize, poolCap, this.balance * 0.95, MAX_POSITION_SOL)
   }
 
   public recordTrade(trade: ClosedTrade): void {

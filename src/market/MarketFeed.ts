@@ -12,6 +12,8 @@ const PUMP_AMM_PROGRAM_ID = 'pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA'
 const PRICE_HISTORY_MAX = 20
 
 export class MarketFeed extends EventEmitter {
+  private ammSignalCount = 0
+  private ammRateBucketStart = Date.now()
   private connection: Connection | null = null
   private fetchConnections: Connection[] = []
   private fetchIndex = 0
@@ -49,7 +51,7 @@ export class MarketFeed extends EventEmitter {
     }
   }
 
-  public start() {
+  public start(): boolean {
     this.rpcUrls = (process.env.RPC_URLS || process.env.RPC_URL || '')
       .split(',')
       .map((u: string) => u.trim())
@@ -58,7 +60,7 @@ export class MarketFeed extends EventEmitter {
     this.rpcUrl = this.rpcUrls[0]
     if (!this.rpcUrl) {
       console.error('[MarketFeed] No RPC_URL in env. Cannot start.')
-      return
+      return false
     }
 
     console.log('[MarketFeed] Starting PumpSwap feed...')
@@ -87,6 +89,8 @@ export class MarketFeed extends EventEmitter {
         if (now - ts > this.signalCooldownMs * 2) this.recentSignals.delete(mint)
       }
     }, 60000)
+
+    return true
   }
 
   private reconnect() {
@@ -207,26 +211,43 @@ export class MarketFeed extends EventEmitter {
   private async processAMMEvent(signature: string, eventType: 'migration' | 'new_pool'): Promise<void> {
     if (!this.connection) return
     try {
-      const tx = await this.fetchTransaction(signature)
-      if (!tx || !tx.meta) return
+      // Migrations bypass the activeAmmFetches throttle — they have priority.
+      // Retry up to 5x with 400ms delay in case TX not yet indexed by RPC.
+      const conn = this.fetchConnections[0] || this.connection
+      let tx: any = null
+      for (let attempt = 0; attempt < 5; attempt++) {
+        if (attempt > 0) await new Promise(r => setTimeout(r, 400))
+        try {
+          tx = await conn.getParsedTransaction(signature, {
+            maxSupportedTransactionVersion: 0,
+            commitment: 'confirmed',
+          })
+          if (tx?.meta) break
+        } catch (_) {}
+      }
+      if (!tx || !tx.meta) {
+        console.log('[MarketFeed] Migration TX not fetchable: ' + signature.slice(0, 8))
+        return
+      }
       const tokenBalances = tx.meta.postTokenBalances || []
       const relevantToken = this.findPumpToken(tokenBalances)
       if (relevantToken?.mint) {
-        const poolAddress = this.extractPoolAddress(tx)
-        if (poolAddress) {
-          const liquiditySol = this.extractSolAmount(tx)
-          console.log('[MarketFeed] FAST ENTRY: ' + poolAddress.slice(0, 8) + '... Liq: ' + liquiditySol.toFixed(2) + ' SOL')
-          this.emitSignal({
-            type: eventType === 'migration' ? 'migration' : 'new_pool',
-            mint: relevantToken.mint,
-            pool: poolAddress,
-            liquiditySol,
-            poolAgeMs: 0,
-            priceSol: 0,
-            eventData: { signature },
-            timestamp: Date.now(),
-          })
-        }
+        const poolAddress = this.extractPoolAddress(tx) || ''  // empty = LiveExecutor uses canonical PDA
+        const liquiditySol = this.extractSolAmount(tx)
+        const entryLabel = poolAddress ? poolAddress.slice(0, 8) : relevantToken.mint.slice(0, 8)
+        console.log('[MarketFeed] FAST ENTRY: ' + entryLabel + '... Liq: ' + liquiditySol.toFixed(2) + ' SOL')
+        this.emitSignal({
+          type: eventType === 'migration' ? 'migration' : 'new_pool',
+          mint: relevantToken.mint,
+          pool: poolAddress,
+          liquiditySol,
+          poolAgeMs: 0,
+          priceSol: 0,
+          eventData: { signature },
+          timestamp: Date.now(),
+        })
+      } else {
+        console.log('[MarketFeed] Migration TX: no pump token found in balances')
       }
     } catch (e) {
       console.error('[MarketFeed] Error processing AMM event:', e)
@@ -252,8 +273,12 @@ export class MarketFeed extends EventEmitter {
       const poolAddress = this.extractPoolAddress(tx)
       if (!poolAddress) return
       const tradeAmountSol = this.extractSolAmount(tx)
-      if (tradeAmountSol < 1) return
+      if (tradeAmountSol < 5) return
       const estimatedLiq = tradeAmountSol * 10
+      // Hard liquidity floor: skip amm_activity if estimated liquidity < 50 SOL
+      if (estimatedLiq < 50) return
+      // Rate limiter: max 10 amm_activity signals per minute
+      if (!this.ammRateLimiter()) return
       console.log('[MarketFeed] AMM ACTIVITY: ' + poolAddress.slice(0, 8) + '... Trade: ' + tradeAmountSol.toFixed(2) + ' SOL')
       this.emitSignal({
         type: 'amm_activity',
@@ -364,6 +389,17 @@ export class MarketFeed extends EventEmitter {
       else this.activeCoreFetches--
     }
     return null
+  }
+
+  private ammRateLimiter(): boolean {
+    const now = Date.now()
+    if (now - this.ammRateBucketStart > 60000) {
+      this.ammSignalCount = 0
+      this.ammRateBucketStart = now
+    }
+    if (this.ammSignalCount >= 10) return false
+    this.ammSignalCount++
+    return true
   }
 
   private emitSignal(signal: MarketSignal) {

@@ -6,14 +6,16 @@ import { Connection } from '@solana/web3.js'
 import { MarketFeed } from './market/MarketFeed'
 import { PopulationManager } from './population/PopulationManager'
 import { PaperExecutor } from './execution/PaperExecutor'
+import { LiveExecutor } from './execution/LiveExecutor'
 import { BankrollManager } from './execution/BankrollManager'
 import { Logger } from './observatory/Logger'
 import { PoolPriceService } from './market/PoolPriceService'
 import { createRandom } from './genome/GenomeFactory'
 import { MarketSignal, PricePoint, Genome, ClosedTrade } from './types'
+import { getPrimaryRpcUrl, resolveRuntimeConfig, RuntimeConfig } from './config/runtime'
 
-const GENERATION_INTERVAL_MS = 4 * 60 * 60 * 1000
-const GENERATION_TRADE_THRESHOLD = 300
+const GENERATION_INTERVAL_MS = 1 * 60 * 60 * 1000  // 1 hour (was 4)
+const GENERATION_TRADE_THRESHOLD = 75              // (was 300)
 const STATUS_INTERVAL_MS = 30 * 1000
 const TICK_INTERVAL_MS = 1000
 const PRICE_POLL_INTERVAL_MS = 3000
@@ -24,9 +26,12 @@ const PRICE_CACHE_TTL = 3000
 const SOL_MINT = 'So11111111111111111111111111111111111111112'
 
 export class Orchestrator {
+  private runtime: RuntimeConfig
   private feed: MarketFeed
   private population: PopulationManager
   private paperExecutor: PaperExecutor
+  private liveExecutor: LiveExecutor | null = null
+  private liveMode: boolean
   private bankroll: BankrollManager
   private logger: Logger
   private poolPriceService: PoolPriceService | null = null
@@ -37,23 +42,45 @@ export class Orchestrator {
   private statusHandle: NodeJS.Timeout | null = null
   private pricePollHandle: NodeJS.Timeout | null = null
   private rpcConnection: Connection | null = null
+  private startingBalance: number = parseFloat(process.env.STARTING_BALANCE_SOL || '1.0')
+  private signalDistLog: { migration: number; amm: number; whale: number; other: number } = { migration: 0, amm: 0, whale: 0, other: 0 }
+  private signalTradedLog: { migration: number; amm: number; whale: number; other: number } = { migration: 0, amm: 0, whale: 0, other: 0 }
+  private lastSignalDistLog = Date.now()
 
   constructor() {
+    this.runtime = resolveRuntimeConfig(process.env)
+    this.liveMode = this.runtime.mode === 'live'
+    for (const warning of this.runtime.warnings) {
+      console.warn('[Darwin] Config warning: ' + warning)
+    }
+    if (this.liveMode && this.runtime.liveEnvErrors.length > 0) {
+      throw new Error(
+        'DARWIN_MODE=live requires ' + this.runtime.liveEnvErrors.join(', ')
+      )
+    }
+
     this.logger = new Logger()
     this.logger.initDb()
     this.feed = new MarketFeed()
     this.population = new PopulationManager(this.logger)
     this.paperExecutor = new PaperExecutor()
     this.bankroll = new BankrollManager()
+    if (this.liveMode) {
+      this.liveExecutor = new LiveExecutor()
+      console.log('[Darwin] Live executor armed. Real funds will be used if signals fire.')
+    }
   }
 
   public async start(): Promise<void> {
     console.log('[Darwin] ===== DARWIN ORGANISM STARTING =====')
-    console.log('[Darwin] Paper trading: ' + (process.env.PAPER_TRADE !== 'false' ? 'YES' : 'NO'))
+    console.log('[Darwin] Mode: ' + this.runtime.mode.toUpperCase())
     console.log('[Darwin] Population size: ' + parseInt(process.env.DARWIN_POP_SIZE || '16', 10))
     console.log('[Darwin] Starting balance: ' + this.bankroll.getCurrentBalance().toFixed(4) + ' SOL')
+    if (this.liveMode) {
+      console.log('[Darwin] Live trade size: ' + parseFloat(process.env.LIVE_TRADE_SIZE_SOL || '0.001').toFixed(4) + ' SOL')
+    }
 
-    const rpcUrl = (process.env.RPC_URLS || process.env.RPC_URL || '').split(',')[0].trim()
+    const rpcUrl = getPrimaryRpcUrl(process.env)
     if (rpcUrl) {
       this.rpcConnection = new Connection(rpcUrl, 'confirmed')
       this.poolPriceService = new PoolPriceService(rpcUrl)
@@ -67,11 +94,14 @@ export class Orchestrator {
     this.feed.on('signal', (signal: MarketSignal) => {
       this.onSignal(signal).catch((e) => console.error('[Darwin] onSignal error:', e))
     })
-    this.feed.start()
+    if (!this.feed.start()) {
+      throw new Error('MarketFeed failed to start. Set RPC_URL or RPC_URLS before launching Darwin.')
+    }
 
     this.tickHandle = setInterval(() => this.tickPositions(), TICK_INTERVAL_MS)
     this.statusHandle = setInterval(() => this.printStatus(), STATUS_INTERVAL_MS)
     this.pricePollHandle = setInterval(() => this.pollPricesForOpenPositions(), PRICE_POLL_INTERVAL_MS)
+    setInterval(() => this.printSignalDistribution(), 5 * 60 * 1000)
 
     setTimeout(() => this.printStatus(), 5000)
     console.log('[Darwin] All systems running. Waiting for market signals...')
@@ -80,14 +110,50 @@ export class Orchestrator {
   private seedPopulation(): void {
     const popSize = parseInt(process.env.DARWIN_POP_SIZE || '16', 10)
     console.log('[Darwin] Seeding initial population of ' + popSize + ' strategies...')
-    for (let i = 0; i < popSize; i++) {
+
+    // Load best previously evolved genomes from DB — carry knowledge across restarts
+    const savedGenomes = this.logger.loadBestGenomes(Math.floor(popSize * 0.6))
+    let seededFromDB = 0
+    for (const genome of savedGenomes) {
+      if (this.population.size() >= popSize) break
+      // Bump generation count so we know this genome survived a restart
+      genome.generation = (genome.generation || 0) + 1
+      this.population.spawn(genome, true)
+      seededFromDB++
+    }
+
+    // Fill remainder with fresh random genomes (exploration)
+    const remaining = popSize - this.population.size()
+    for (let i = 0; i < remaining; i++) {
       const genome = createRandom(0)
       this.population.spawn(genome, true)
     }
-    console.log('[Darwin] Population seeded: ' + this.population.size() + ' strategies ready')
+
+    console.log(
+      '[Darwin] Population seeded: ' + this.population.size() + ' strategies ready' +
+      ' (' + seededFromDB + ' from DB memory, ' + remaining + ' fresh random)'
+    )
   }
 
   private async onSignal(signal: MarketSignal): Promise<void> {
+    // Track signal distribution
+    if (signal.type === 'migration') this.signalDistLog.migration++
+    else if (signal.type === 'amm_activity') this.signalDistLog.amm++
+    else if (signal.type === 'whale_buy') this.signalDistLog.whale++
+    else this.signalDistLog.other++
+
+    // Survival mode: if balance < 70% of starting balance, only trade migrations
+    const balance = this.bankroll.getCurrentBalance()
+    const inSurvivalMode = balance < this.startingBalance * 0.70
+    if (inSurvivalMode && signal.type !== 'migration') {
+      return  // Skip all non-migration signals when bleeding out
+    }
+
+    // Quality gate: amm_activity requires at least 50 SOL pool liquidity
+    if (signal.type === 'amm_activity' && signal.liquiditySol < 50) {
+      return
+    }
+
     // Fetch real price BEFORE evaluating strategies — skip if we can't get one
     // Priority: 1) pool reserves (direct on-chain) 2) migration estimate 3) Jupiter
     let entryPrice = signal.priceSol > 0 ? signal.priceSol : 0
@@ -136,7 +202,7 @@ export class Orchestrator {
     // Calculate committed capital (sum of all open position sizes) to prevent over-leverage.
     // Multiple strategies can fire on the same signal in a single loop, so we track
     // how much we've allocated this signal and deduct from available capital dynamically.
-    const allOpen = this.paperExecutor.getOpenPositions()
+    const allOpen = this.liveMode && this.liveExecutor ? this.liveExecutor.getOpenPositions() : this.paperExecutor.getOpenPositions()
     const committedCapital = allOpen.reduce((sum, p) => sum + p.sizeSol, 0)
     let availableCapital = Math.max(0, this.bankroll.getCurrentBalance() - committedCapital)
 
@@ -144,7 +210,7 @@ export class Orchestrator {
       try {
         if (availableCapital < 0.01) break  // No capital left — skip remaining strategies
 
-        const openCount = this.paperExecutor.getOpenPositionCount(strategy.id)
+        const openCount = this.liveMode && this.liveExecutor ? this.liveExecutor.getOpenPositionCount(strategy.id) : this.paperExecutor.getOpenPositionCount(strategy.id)
         if (openCount >= strategy.genome.risk.maxConcurrent) continue
         if (this.bankroll.isDrawdownBreached()) continue
 
@@ -152,22 +218,33 @@ export class Orchestrator {
         const fired = strategy.evaluateSignal(signal, priceHistory)
 
         if (fired) {
-          // Size against available capital, not total balance, to prevent over-leverage
+          // Size using BankrollManager (signal-type multiplier + hard cap)
           const sizeSol = Math.min(
-            availableCapital * strategy.genome.risk.capitalPct,
-            signal.liquiditySol * strategy.genome.risk.maxPoolPct,
+            this.bankroll.getPositionSize(
+              strategy.genome.risk.capitalPct,
+              signal.liquiditySol,
+              strategy.genome.risk.maxPoolPct,
+              signal.type
+            ),
             availableCapital * 0.95
           )
 
-          if (sizeSol < 0.001) continue
+          if (sizeSol < 0.00001) continue  // floor: 10 lamports minimum
 
-          const pos = this.paperExecutor.open(
-            signal,
-            strategy.genome,
-            strategy.id,
-            sizeSol,
-            entryPrice
-          )
+          // Track signal traded
+          if (signal.type === 'migration') this.signalTradedLog.migration++
+          else if (signal.type === 'amm_activity') this.signalTradedLog.amm++
+          else if (signal.type === 'whale_buy') this.signalTradedLog.whale++
+          else this.signalTradedLog.other++
+
+          const pos = this.liveMode && this.liveExecutor
+            ? await this.liveExecutor.open(signal, strategy.genome, strategy.id, sizeSol, entryPrice)
+            : this.paperExecutor.open(signal, strategy.genome, strategy.id, sizeSol, entryPrice)
+
+          if (!pos) {
+            console.log('[Darwin] TX FAILED: ' + strategy.id.slice(-8) + ' | ' + signal.mint.slice(0,8) + '... (simulated failed tx)')
+            continue
+          }
 
           availableCapital -= sizeSol  // Deduct from pool for subsequent strategies
 
@@ -189,7 +266,8 @@ export class Orchestrator {
 
   private tickPositions(): void {
     const currentPrices = new Map<string, number>()
-    const openPositions = this.paperExecutor.getOpenPositions()
+    const executor = this.liveMode && this.liveExecutor ? this.liveExecutor : this.paperExecutor
+    const openPositions = executor.getOpenPositions()
 
     for (const pos of openPositions) {
       const history = this.feed.getPriceHistory(pos.mint)
@@ -204,7 +282,7 @@ export class Orchestrator {
       genomes.set(strat.genome.id, strat.genome)
     }
 
-    const closedTrades = this.paperExecutor.tick(currentPrices, genomes)
+    const closedTrades = executor.tick(currentPrices, genomes)
 
     for (const trade of closedTrades) {
       const strategy = this.population.getStrategy(trade.strategyId)
@@ -231,7 +309,7 @@ export class Orchestrator {
   }
 
   private async pollPricesForOpenPositions(): Promise<void> {
-    const openPositions = this.paperExecutor.getOpenPositions()
+    const openPositions = this.liveMode && this.liveExecutor ? this.liveExecutor.getOpenPositions() : this.paperExecutor.getOpenPositions()
     if (openPositions.length === 0) return
 
     // Collect unique mints and their associated pools
@@ -262,12 +340,7 @@ export class Orchestrator {
           // (e.g. inverted reserves on a nearly-drained pool).
           const entryPrice = mintEntryPriceMap.get(mint) || 0
           if (entryPrice > 0 && price > entryPrice * 10_000) {
-            console.warn(
-              '[Darwin] PRICE SANITY REJECTED: ' + mint.slice(0, 8) +
-              '... price=' + price.toFixed(8) +
-              ' entry=' + entryPrice.toFixed(8) +
-              ' ratio=' + (price / entryPrice).toFixed(0) + 'x (pool likely drained)'
-            )
+            // Silently reject — drained pool, not an error worth spamming
             continue
           }
           this.feed.addPricePoint(mint, price)
@@ -314,12 +387,32 @@ export class Orchestrator {
     }
   }
 
+  private printSignalDistribution(): void {
+    const now = Date.now()
+    const mins = Math.round((now - this.lastSignalDistLog) / 60000)
+    this.lastSignalDistLog = now
+    const d = this.signalDistLog
+    const t = this.signalTradedLog
+    const total = d.migration + d.amm + d.whale + d.other || 1
+    const inSurvival = this.bankroll.getCurrentBalance() < this.startingBalance * 0.70
+    console.log(
+      '[Darwin] Signal dist (' + mins + 'min): ' +
+      'migration=' + d.migration + '(traded:' + t.migration + ') ' +
+      'amm=' + d.amm + '(traded:' + t.amm + ') ' +
+      'whale=' + d.whale + '(traded:' + t.whale + ')' +
+      (inSurvival ? ' | SURVIVAL MODE ACTIVE' : '')
+    )
+    // Reset counters
+    this.signalDistLog = { migration: 0, amm: 0, whale: 0, other: 0 }
+    this.signalTradedLog = { migration: 0, amm: 0, whale: 0, other: 0 }
+  }
+
   private printStatus(): void {
     const strategies = this.population.getAll()
     const paper = this.population.getPaperStrategies()
     const live = this.population.getLiveStrategies()
     const balance = this.bankroll.getCurrentBalance()
-    const openCount = this.paperExecutor.getOpenPositionCount()
+    const openCount = this.liveMode && this.liveExecutor ? this.liveExecutor.getOpenPositionCount() : this.paperExecutor.getOpenPositionCount()
 
     const scored = strategies.map((s) => s.getFitness()).filter((f) => f.tradeCount > 0)
     scored.sort((a, b) => b.score - a.score)
@@ -332,12 +425,15 @@ export class Orchestrator {
     const h = Math.floor(timeUntilGen / (1000 * 60 * 60))
     const m = Math.floor((timeUntilGen % (1000 * 60 * 60)) / (1000 * 60))
 
+    const inSurvivalMode = balance < this.startingBalance * 0.70
     console.log(
-      '[Darwin] Pop: ' + strategies.length + ' (' + paper.length + ' paper, ' + live.length + ' live)' +
+      '[Darwin] Mode: ' + this.runtime.mode +
+      ' | Pop: ' + strategies.length + ' (' + paper.length + ' paper, ' + live.length + ' live)' +
       ' | Trades: ' + this.totalTrades +
       ' | Open: ' + openCount +
       ' | Best fitness: ' + bestFitness.toFixed(3) +
-      ' | Bankroll: ' + balance.toFixed(4) + ' SOL'
+      ' | Bankroll: ' + balance.toFixed(4) + ' SOL' +
+      (inSurvivalMode ? ' | ⚠ SURVIVAL MODE' : '')
     )
 
     if (scored.length > 0) {

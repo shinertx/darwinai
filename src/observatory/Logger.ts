@@ -47,7 +47,8 @@ export class Logger {
         opened_at INTEGER,
         closed_at INTEGER,
         hold_ms INTEGER,
-        is_paper INTEGER
+        is_paper INTEGER,
+        signal_type TEXT
       );
 
       CREATE TABLE IF NOT EXISTS graveyard (
@@ -62,6 +63,19 @@ export class Logger {
       CREATE INDEX IF NOT EXISTS idx_trades_strategy ON trades(strategy_id);
       CREATE INDEX IF NOT EXISTS idx_trades_mint ON trades(mint);
       CREATE INDEX IF NOT EXISTS idx_trades_closed_at ON trades(closed_at);
+
+      CREATE TABLE IF NOT EXISTS genomes (
+        genome_id TEXT PRIMARY KEY,
+        genome_json TEXT NOT NULL,
+        fitness_score REAL,
+        trade_count INTEGER,
+        win_rate REAL,
+        total_pnl_sol REAL,
+        generation INTEGER,
+        saved_at INTEGER
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_genomes_score ON genomes(fitness_score DESC);
     `)
     console.log('[Logger] DB initialized at ' + DB_PATH)
   }
@@ -118,18 +132,19 @@ export class Logger {
             id, strategy_id, genome_id, mint, pool,
             entry_price_sol, exit_price_sol, size_sol,
             pnl_sol, pnl_pct, mfe_pct, mae_pct, exit_reason,
-            opened_at, closed_at, hold_ms, is_paper
+            opened_at, closed_at, hold_ms, is_paper, signal_type
           ) VALUES (
             ?, ?, ?, ?, ?,
             ?, ?, ?,
             ?, ?, ?, ?, ?,
-            ?, ?, ?, ?
+            ?, ?, ?, ?, ?
           )
         `).run(
           trade.id, trade.strategyId, trade.genomeId, trade.mint, trade.pool,
           trade.entryPriceSol, trade.exitPriceSol, trade.sizeSol,
           trade.pnlSol, trade.pnlPct, trade.mfePct, trade.maePct, trade.exitReason,
-          trade.openedAt, trade.closedAt, trade.holdMs, trade.isPaper ? 1 : 0
+          trade.openedAt, trade.closedAt, trade.holdMs, trade.isPaper ? 1 : 0,
+          trade.signalType || null
         )
       } catch (e) {}
     }
@@ -137,6 +152,40 @@ export class Logger {
 
   public logBankroll(balance: number, timestamp: number): void {
     this.appendJsonl(this.bankrollPath, { balance, timestamp })
+  }
+
+  public saveGenome(genome: Genome, fitness: FitnessScore): void {
+    if (!this.db) return
+    try {
+      const winRate = fitness.tradeCount > 0
+        ? (fitness.upsideCapture > 0 ? fitness.tradeFrequency : 0)
+        : 0
+      const insertSql = 'INSERT OR REPLACE INTO genomes (genome_id, genome_json, fitness_score, trade_count, win_rate, total_pnl_sol, generation, saved_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+      this.db.prepare(insertSql).run(
+        genome.id,
+        JSON.stringify(genome),
+        fitness.score,
+        fitness.tradeCount,
+        winRate,
+        fitness.totalPnlSol,
+        genome.generation,
+        Date.now()
+      )
+    } catch (e) { console.error('[Logger] saveGenome error:', e) }
+  }
+
+  public loadBestGenomes(limit = 10): Genome[] {
+    if (!this.db) return []
+    try {
+      const selectSql = 'SELECT genome_json FROM genomes WHERE trade_count >= 3 ORDER BY fitness_score DESC LIMIT ?'
+      const rows = this.db.prepare(selectSql).all(limit) as { genome_json: string }[]
+      const genomes = rows.map((r) => JSON.parse(r.genome_json) as Genome)
+      console.log('[Logger] Loaded ' + genomes.length + ' persisted genomes from DB')
+      return genomes
+    } catch (e) {
+      console.error('[Logger] loadBestGenomes error:', e)
+      return []
+    }
   }
 
   private appendJsonl(filePath: string, data: any): void {

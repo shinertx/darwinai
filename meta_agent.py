@@ -1,0 +1,502 @@
+#!/usr/bin/env python3
+"""
+meta_agent.py — Darwin paper-only autoresearch loop
+
+Each cycle:
+  1. Pick one approved tunable file
+  2. Ask OpenAI for one targeted improvement
+  3. Build and restart the paper app only
+  4. Wait for fresh paper trades
+  5. Keep or revert based on eval.py score
+"""
+
+from __future__ import annotations
+
+import json
+import logging
+import os
+import re
+import shlex
+import subprocess
+import sys
+import time
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+
+def load_env_file(path: Path, override: bool = False) -> None:
+    if not path.exists():
+        return
+
+    for raw_line in path.read_text().splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if override or key not in os.environ:
+            os.environ[key] = value
+
+
+DARWIN_DIR = Path(__file__).resolve().parent
+load_env_file(DARWIN_DIR / ".env")
+load_env_file(DARWIN_DIR / ".env.local", override=True)
+
+LOG_PATH = DARWIN_DIR / "autoresearch.log"
+HISTORY_PATH = DARWIN_DIR / "autoresearch_history.json"
+PROGRAM_PATH = DARWIN_DIR / "program.md"
+TYPES_PATH = DARWIN_DIR / "src/types.ts"
+
+TARGET_APP = os.getenv("AUTORESEARCH_TARGET_APP", "darwin-paper").strip() or "darwin-paper"
+TARGET_APP_OUT_LOG = Path.home() / ".pm2" / "logs" / f"{TARGET_APP}-out.log"
+TARGET_APP_ERR_LOG = Path.home() / ".pm2" / "logs" / f"{TARGET_APP}-error.log"
+
+EXPERIMENT_MIN = int(os.getenv("AUTORESEARCH_EXPERIMENT_MINUTES", "8"))
+MIN_TRADES = int(os.getenv("AUTORESEARCH_MIN_TRADES", "8"))
+IMPROVE_THRESH = float(os.getenv("AUTORESEARCH_IMPROVE_THRESHOLD", "1.05"))
+MAX_EXPERIMENTS = int(os.getenv("AUTORESEARCH_MAX_EXPERIMENTS", "200"))
+MODEL = os.getenv("OPENAI_MODEL", "gpt-5.3-codex")
+REASONING_EFFORT = os.getenv("OPENAI_REASONING_EFFORT", "medium").strip().lower()
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
+OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
+
+TUNABLE_FILES = [
+    "src/evolution/FitnessScorer.ts",
+    "src/market/MarketFeed.ts",
+    "src/genome/GenomeFactory.ts",
+]
+
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[
+        logging.FileHandler(LOG_PATH),
+        logging.StreamHandler(sys.stdout),
+    ],
+)
+log = logging.getLogger("autoresearch")
+
+
+def run(cmd: str, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
+    merged_env = os.environ.copy()
+    if env:
+        merged_env.update(env)
+    return subprocess.run(
+        cmd,
+        shell=True,
+        cwd=DARWIN_DIR,
+        capture_output=True,
+        text=True,
+        env=merged_env,
+    )
+
+
+def shell_quote(value: str) -> str:
+    return shlex.quote(value)
+
+
+def extract_response_text(payload: dict) -> str:
+    if isinstance(payload.get("output_text"), str) and payload["output_text"].strip():
+        return payload["output_text"].strip()
+
+    texts: list[str] = []
+    for item in payload.get("output", []):
+        for content in item.get("content", []):
+            if content.get("type") == "output_text" and content.get("text"):
+                texts.append(content["text"])
+    return "\n".join(texts).strip()
+
+
+def ask_openai(prompt: str, max_output_tokens: int = 4096) -> str:
+    if not OPENAI_API_KEY:
+        raise RuntimeError("OPENAI_API_KEY is not set")
+
+    body: dict[str, object] = {
+        "model": MODEL,
+        "input": prompt,
+        "max_output_tokens": max_output_tokens,
+        "store": False,
+    }
+    if REASONING_EFFORT:
+        body["reasoning"] = {"effort": REASONING_EFFORT}
+
+    request = urllib.request.Request(
+        f"{OPENAI_BASE_URL}/responses",
+        data=json.dumps(body).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {OPENAI_API_KEY}",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(request, timeout=180) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        raise RuntimeError(f"OpenAI API error {exc.code}: {body[:600]}") from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"OpenAI request failed: {exc.reason}") from exc
+
+    text = extract_response_text(payload)
+    if not text:
+        raise RuntimeError("OpenAI response did not include output text")
+    return text
+
+
+def read_file(rel_path: str) -> str:
+    return (DARWIN_DIR / rel_path).read_text()
+
+
+def write_file(rel_path: str, content: str) -> None:
+    (DARWIN_DIR / rel_path).write_text(content)
+
+
+def extract_code(raw: str) -> str:
+    if "---FILE---" in raw:
+        return raw.split("---FILE---", 1)[1].strip()
+    if "```" in raw:
+        block = raw.split("```", 1)[1].split("```", 1)[0]
+        lines = block.splitlines()
+        if lines and lines[0].strip() in {"typescript", "ts"}:
+            lines = lines[1:]
+        return "\n".join(lines).strip()
+    return raw.strip()
+
+
+def load_history() -> list[dict]:
+    if not HISTORY_PATH.exists():
+        return []
+    try:
+        data = json.loads(HISTORY_PATH.read_text())
+        return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+
+def save_history(history: list[dict]) -> None:
+    HISTORY_PATH.write_text(json.dumps(history, indent=2))
+
+
+def get_program_context() -> tuple[str, str]:
+    return PROGRAM_PATH.read_text(), TYPES_PATH.read_text()
+
+
+def build_prompt(file_path: str, current_code: str, baseline: dict, history: list[dict]) -> str:
+    program_md, types_ts = get_program_context()
+    history_str = json.dumps(history[-5:], indent=2) if history else "[]"
+    baseline_str = json.dumps(baseline, indent=2)
+
+    types_section = ""
+    if file_path in ("src/market/MarketFeed.ts", "src/genome/GenomeFactory.ts"):
+        types_section = f"""
+=== AVAILABLE TYPES (src/types.ts) ===
+{types_ts}
+"""
+
+    return f"""You are optimizing Darwin, a paper-first evolutionary Solana trading bot.
+
+=== PROGRAM INSTRUCTIONS ===
+{program_md}
+{types_section}
+=== CURRENT BASELINE METRICS ===
+{baseline_str}
+
+=== LAST {min(5, len(history))} EXPERIMENTS ===
+{history_str}
+
+=== FILE TO MODIFY: {file_path} ===
+{current_code}
+
+=== YOUR TASK ===
+State your hypothesis in 1-2 sentences, then return the COMPLETE modified file.
+
+CRITICAL CONSTRAINTS:
+- The file MUST compile with TypeScript (tsc) without errors
+- Do NOT add any new import statements
+- Do NOT change function signatures or method names that other files depend on
+- Do NOT touch files outside the one shown above
+- Make exactly ONE targeted change to improve paper trading performance
+
+Output format:
+HYPOTHESIS: <your reasoning>
+---FILE---
+<complete file content>"""
+
+
+def eval_score(since_ts_ms: int) -> dict:
+    for _ in range(3):
+        result = run(f"python3 eval.py {since_ts_ms}")
+        try:
+            data = json.loads(result.stdout)
+            if data["trades"] >= MIN_TRADES:
+                return data
+            log.info("  Only %s paper trades so far, waiting 10 more minutes...", data["trades"])
+            time.sleep(600)
+        except Exception as exc:
+            log.error("  eval parse error: %s | stdout=%s", exc, result.stdout[:200])
+            time.sleep(60)
+
+    return json.loads(run(f"python3 eval.py {since_ts_ms}").stdout)
+
+
+def rebuild() -> bool:
+    log.info("  Building Darwin...")
+    result = run("npm run build")
+    if result.returncode != 0:
+        log.error("  BUILD FAILED:\n%s", (result.stdout + result.stderr)[-800:])
+        return False
+    return True
+
+
+def wait_for_target_app_ready() -> bool:
+    for _ in range(60):
+        time.sleep(1)
+        stdout = TARGET_APP_OUT_LOG.read_text() if TARGET_APP_OUT_LOG.exists() else ""
+        stderr = TARGET_APP_ERR_LOG.read_text() if TARGET_APP_ERR_LOG.exists() else ""
+        recent = "\n".join(stdout.splitlines()[-80:] + stderr.splitlines()[-40:])
+        if "Mode: PAPER" in recent and "All systems running" in recent:
+            return True
+        if "Fatal error" in recent:
+            return False
+    return False
+
+
+def restart_target_app() -> bool:
+    result = run(f"pm2 restart {shell_quote(TARGET_APP)} --update-env")
+    if result.returncode != 0:
+        result = run(f"pm2 start ecosystem.config.cjs --only {shell_quote(TARGET_APP)} --update-env")
+    if result.returncode != 0:
+        log.error("  Failed to restart/start %s:\n%s", TARGET_APP, (result.stdout + result.stderr)[-800:])
+        return False
+
+    ready = wait_for_target_app_ready()
+    log.info("  %s health: %s", TARGET_APP, "READY" if ready else "FAILED")
+    return ready
+
+
+def git_commit(file_path: str, message: str) -> bool:
+    quoted = shell_quote(file_path)
+    run(f"git add -- {quoted}")
+    staged = run(f"git diff --cached --quiet -- {quoted}")
+    if staged.returncode == 0:
+        return False
+    result = run(f"git commit -m {shell_quote(message)} -- {quoted}")
+    if result.returncode != 0:
+        log.error("  Commit failed:\n%s", (result.stdout + result.stderr)[-800:])
+        return False
+    return True
+
+
+def file_is_dirty(file_path: str) -> bool:
+    quoted = shell_quote(file_path)
+    return (
+        run(f"git diff --quiet -- {quoted}").returncode != 0
+        or run(f"git diff --cached --quiet -- {quoted}").returncode != 0
+    )
+
+
+def revert_file(file_path: str, backup_code: str) -> bool:
+    write_file(file_path, backup_code)
+    if not rebuild():
+        return False
+    return restart_target_app()
+
+
+def pick_file(experiment_num: int, baseline: dict) -> str:
+    no_pump = baseline.get("no_pump_bail_pct", 50)
+    win_rate = baseline.get("win_rate", 0)
+    mig_trades = baseline.get("migration_trades", 0)
+    if no_pump > 60:
+        return TUNABLE_FILES[(experiment_num - 1) % 2]
+    if win_rate < 30 or mig_trades < 5:
+        return TUNABLE_FILES[0]
+    return TUNABLE_FILES[(experiment_num - 1) % len(TUNABLE_FILES)]
+
+
+def build_fix_prompt(errors: str, error_context: str, hypothesis: str, file_path: str) -> str:
+    return f"""The TypeScript code you wrote has build errors. Fix ONLY the specific errors.
+
+BUILD ERRORS:
+{errors[:800]}
+{error_context}
+
+ORIGINAL HYPOTHESIS: {hypothesis}
+FILE: {file_path}
+
+RULES:
+- Return the COMPLETE corrected file
+- Fix ONLY the lines causing the build errors shown above
+- Do not change logic outside the error locations
+- No markdown fences, no explanation"""
+
+
+def extract_error_context(file_path: str, errors: str) -> str:
+    written_lines = read_file(file_path).splitlines()
+    matches = re.findall(r"\((\d+),\d+\):", errors)
+    snippets = []
+    seen: set[int] = set()
+    for line_str in matches[:4]:
+        line_number = int(line_str)
+        if line_number in seen:
+            continue
+        seen.add(line_number)
+        start = max(0, line_number - 5)
+        end = min(len(written_lines), line_number + 4)
+        snippet = "\n".join(
+            f"{index + 1:4d}| {written_lines[index]}"
+            for index in range(start, end)
+        )
+        snippets.append(f"Line {line_number}:\n{snippet}")
+    return "\n\nFAILING CODE CONTEXT:\n" + "\n\n".join(snippets) if snippets else ""
+
+
+def main() -> int:
+    if not OPENAI_API_KEY:
+        log.error("OPENAI_API_KEY is required for autoresearch.")
+        return 1
+
+    history = load_history()
+
+    log.info("=" * 60)
+    log.info("DARWIN AUTORESEARCH — Starting")
+    log.info("Model: %s", MODEL)
+    log.info("Reasoning effort: %s", REASONING_EFFORT or "default")
+    log.info("Target app: %s", TARGET_APP)
+    log.info("Experiment budget: %s minutes each", EXPERIMENT_MIN)
+    log.info("Tunable files: %s", ", ".join(TUNABLE_FILES))
+    log.info("=" * 60)
+
+    if not rebuild():
+        return 1
+    if not restart_target_app():
+        log.error("Failed to start healthy paper target app %s.", TARGET_APP)
+        return 1
+
+    baseline_start = int(time.time() * 1000)
+    log.info("[BASELINE] Waiting %s minutes for paper baseline...", EXPERIMENT_MIN)
+    time.sleep(EXPERIMENT_MIN * 60)
+    baseline = eval_score(baseline_start)
+    log.info("  BASELINE: %s", baseline)
+
+    for experiment_num in range(1, MAX_EXPERIMENTS + 1):
+        file_path = pick_file(experiment_num, baseline)
+        label = f"exp{experiment_num:03d}"
+
+        if file_is_dirty(file_path):
+            log.error("Refusing to modify dirty file: %s", file_path)
+            return 1
+
+        current_code = read_file(file_path)
+        prompt = build_prompt(file_path, current_code, baseline, history)
+
+        log.info("%s", "\n" + "=" * 60)
+        log.info("EXPERIMENT %s — modifying %s", experiment_num, file_path)
+        log.info("Current baseline score: %s", baseline.get("score", "?"))
+        log.info("%s", "=" * 60)
+
+        try:
+            raw = ask_openai(prompt)
+        except Exception as exc:
+            log.error("  OpenAI API error: %s", exc)
+            time.sleep(60)
+            continue
+
+        hypothesis = ""
+        if "HYPOTHESIS:" in raw:
+            hypothesis = raw.split("HYPOTHESIS:", 1)[1].split("---FILE---", 1)[0].strip()
+        new_code = extract_code(raw)
+        log.info("  Hypothesis: %s", hypothesis[:200])
+
+        write_file(file_path, new_code)
+        build_result = run("npm run build")
+        if build_result.returncode != 0:
+            errors = (build_result.stdout + build_result.stderr)[-1500:]
+            error_context = extract_error_context(file_path, errors)
+            log.warning("  Build failed. Requesting focused correction...")
+            try:
+                fix_raw = ask_openai(build_fix_prompt(errors, error_context, hypothesis, file_path))
+                write_file(file_path, extract_code(fix_raw))
+                if run("npm run build").returncode != 0:
+                    history.append({
+                        "exp": experiment_num,
+                        "file": file_path,
+                        "hypothesis": hypothesis,
+                        "result": "build_failed_x2",
+                    })
+                    save_history(history)
+                    if not revert_file(file_path, current_code):
+                        return 1
+                    continue
+            except Exception as exc:
+                log.error("  Self-correction failed: %s", exc)
+                history.append({
+                    "exp": experiment_num,
+                    "file": file_path,
+                    "hypothesis": hypothesis,
+                    "result": "build_failed",
+                })
+                save_history(history)
+                if not revert_file(file_path, current_code):
+                    return 1
+                continue
+
+        if not restart_target_app():
+            log.error("  Target app failed health check after applying %s. Reverting.", file_path)
+            history.append({
+                "exp": experiment_num,
+                "file": file_path,
+                "hypothesis": hypothesis,
+                "result": "health_failed",
+            })
+            save_history(history)
+            if not revert_file(file_path, current_code):
+                return 1
+            continue
+
+        exp_start = int(time.time() * 1000)
+        log.info("  %s running... waiting %s minutes", TARGET_APP, EXPERIMENT_MIN)
+        time.sleep(EXPERIMENT_MIN * 60)
+
+        result = eval_score(exp_start)
+        new_score = result.get("score", -99)
+        old_score = baseline.get("score", 0)
+        improved = new_score >= old_score * IMPROVE_THRESH
+
+        log.info(
+            "  Score: %.4f vs baseline %.4f -> %s",
+            new_score,
+            old_score,
+            "KEEPER" if improved else "REVERT",
+        )
+
+        if improved:
+            baseline = result
+            commit_message = f"auto[{label}]: {file_path} score {old_score:.4f}->{new_score:.4f} | {hypothesis[:80]}"
+            git_commit(file_path, commit_message)
+        else:
+            if not revert_file(file_path, current_code):
+                return 1
+
+        history.append({
+            "exp": experiment_num,
+            "file": file_path,
+            "hypothesis": hypothesis[:200],
+            "score_before": old_score,
+            "score_after": new_score,
+            "kept": improved,
+            "metrics": result,
+        })
+        save_history(history)
+
+    log.info("AUTORESEARCH COMPLETE")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

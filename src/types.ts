@@ -79,6 +79,7 @@ export interface Position {
   lowestPriceSol: number
   isPaper: boolean
   poolLiqSol: number
+  signalType: 'migration' | 'whale_buy' | 'new_pool' | 'amm_activity'
 }
 
 export interface ClosedTrade {
@@ -99,6 +100,7 @@ export interface ClosedTrade {
   closedAt: number
   holdMs: number
   isPaper: boolean
+  signalType: 'migration' | 'whale_buy' | 'new_pool' | 'amm_activity'
 }
 
 export interface FitnessScore {

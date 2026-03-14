@@ -87,6 +87,15 @@ export class PopulationManager {
     // Log generation result
     this.logger.logGeneration(result)
 
+    // Save ALL survivors to DB so restarts remember what worked
+    for (const id of result.preserve) {
+      const strat = this.strategies.get(id)
+      if (strat && strat.trades.length >= 3) {
+        const fitness = strat.getFitness()
+        this.logger.saveGenome(strat.genome, fitness)
+      }
+    }
+
     // Spawn new genomes from breeding/mutation/random
     for (const genome of result.newGenomes) {
       if (this.strategies.size < this.maxPop) {

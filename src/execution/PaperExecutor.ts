@@ -5,6 +5,13 @@
 import { v4 as uuidv4 } from 'uuid'
 import { Genome, MarketSignal, Position, ClosedTrade } from '../types'
 
+// ── Realistic live-trading simulation constants ──────────────────────────────
+const TX_FEE_SOL       = 0.002   // priority fee + base fee per transaction
+const FAILED_TX_RATE   = 0.18    // 18% of entries fail on Solana under load
+const ENTRY_DELAY_MS   = 400     // avg ms from signal to confirmed entry
+const EXTRA_SLIPPAGE   = 0.015   // 1.5% additional slippage vs model estimate
+// ─────────────────────────────────────────────────────────────────────────────
+
 function calcSlippage(positionSol: number, poolLiqSol: number): number {
   if (poolLiqSol === 0) return 0.5
   const impactPct = positionSol / poolLiqSol
@@ -45,7 +52,19 @@ export class PaperExecutor {
       lowestPriceSol: entryPrice,
       isPaper: true,
       poolLiqSol: signal.liquiditySol,
+      signalType: signal.type,
     }
+    // Simulate failed transaction (18% of entries never confirm)
+    if (Math.random() < FAILED_TX_RATE) {
+      console.log('[Paper] TX FAILED (simulated): ' + signal.mint.slice(0,8) + '...')
+      return null as unknown as Position
+    }
+    // Deduct entry transaction fee from position size
+    position.sizeSol = Math.max(0, position.sizeSol - TX_FEE_SOL)
+    // Apply additional real-world slippage on entry price
+    position.entryPriceSol = position.entryPriceSol * (1 + EXTRA_SLIPPAGE)
+    position.peakPriceSol  = position.entryPriceSol
+    position.lowestPriceSol = position.entryPriceSol
     this.openPositions.set(position.id, position)
     // Do NOT pre-set lastRealPriceAt here — we want the first genuine
     // price observation from the poll loop (not the entry injection) to
@@ -119,10 +138,13 @@ export class PaperExecutor {
       if (exitReason) {
         const slippage = calcSlippage(pos.sizeSol, pos.poolLiqSol)
         const exitPrice = currentPrice * (1 - slippage)
-        const pnlSol = pos.sizeSol * (exitPrice - pos.entryPriceSol) / pos.entryPriceSol
-        const pnlPct = (exitPrice - pos.entryPriceSol) / pos.entryPriceSol
-        const mfePct = (pos.peakPriceSol - pos.entryPriceSol) / pos.entryPriceSol
-        const maePct = (pos.lowestPriceSol - pos.entryPriceSol) / pos.entryPriceSol
+        // Cap pnlPct to prevent overflow from near-zero price tokens
+        const rawPnlPct = (exitPrice - pos.entryPriceSol) / pos.entryPriceSol
+        const pnlPct = Math.max(-1.0, Math.min(rawPnlPct, 100.0))
+        const pnlSol = (pos.sizeSol * pnlPct) - TX_FEE_SOL  // deduct exit fee
+        const rawMfePct = (pos.peakPriceSol - pos.entryPriceSol) / pos.entryPriceSol
+        const mfePct = Math.min(rawMfePct, 100.0)
+        const maePct = Math.max((pos.lowestPriceSol - pos.entryPriceSol) / pos.entryPriceSol, -1.0)
 
         const trade: ClosedTrade = {
           id: uuidv4(),
@@ -142,6 +164,7 @@ export class PaperExecutor {
           closedAt: now,
           holdMs,
           isPaper: pos.isPaper,
+          signalType: pos.signalType,
         }
 
         this.openPositions.delete(posId)

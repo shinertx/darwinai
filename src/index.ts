@@ -11,8 +11,12 @@ try {
 
 import { Orchestrator } from './Orchestrator'
 
-const orch = new Orchestrator()
-orch.start().catch((err) => {
+async function main(): Promise<void> {
+  const orch = new Orchestrator()
+  await orch.start()
+}
+
+main().catch((err) => {
   console.error('[Darwin] Fatal error:', err)
   process.exit(1)
 })

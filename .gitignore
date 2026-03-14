@@ -8,8 +8,11 @@ dist/
 .env
 .env.local
 .env.*
+!.env.example
 
 # Runtime data — too large / always changing
+autoresearch.log
+autoresearch_history.json
 darwin.db
 darwin.db.*
 darwin.log
@@ -17,6 +20,10 @@ darwin.log.*
 trades.jsonl
 graveyard.jsonl
 logs/
+
+# Python
+__pycache__/
+.venv/
 
 # OS
 .DS_Store
