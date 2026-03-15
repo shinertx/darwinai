@@ -5,22 +5,40 @@
 import { ClosedTrade } from '../types'
 import { resolveRuntimeConfig } from '../config/runtime'
 
+function parsePositiveNumber(value: string | undefined): number | null {
+  const parsed = parseFloat(value || '')
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), max)
+}
+
 export class BankrollManager {
   private balance: number
   private peakBalance: number
   private startedAt: number
   private trades: ClosedTrade[] = []
   private drawdownPausePct: number
+  private mode: 'paper' | 'live'
+  private liveTradeSizeSol: number
+  private paperMaxPositionPct: number
+  private paperMaxPositionSol: number | null
 
   constructor() {
     const startBalance = parseFloat(process.env.STARTING_BALANCE_SOL || '1.0')
     const runtime = resolveRuntimeConfig(process.env)
+    const parsedPaperMaxPositionPct = parsePositiveNumber(process.env.DARWIN_PAPER_MAX_POSITION_PCT)
     this.balance = startBalance
     this.peakBalance = startBalance
     this.startedAt = Date.now()
+    this.mode = runtime.mode
+    this.liveTradeSizeSol = parsePositiveNumber(process.env.LIVE_TRADE_SIZE_SOL) || 0.001
+    this.paperMaxPositionPct = clamp(parsedPaperMaxPositionPct || 0.12, 0.01, 0.95)
+    this.paperMaxPositionSol = parsePositiveNumber(process.env.DARWIN_PAPER_MAX_POSITION_SOL)
     // Paper trading is virtual — allow deeper drawdown so evolution has runway.
     // Live mode uses a strict halt to protect capital.
-    const isPaper = runtime.mode === 'paper'
+    const isPaper = this.mode === 'paper'
     this.drawdownPausePct = isPaper ? 0.90 : 0.40
     console.log('[BankrollManager] Starting balance: ' + startBalance.toFixed(4) + ' SOL | mode=' + runtime.mode)
   }
@@ -46,16 +64,40 @@ export class BankrollManager {
     sizeSol: number
     signalMultiplier: number
   } {
-    const MAX_POSITION_SOL = 0.10
+    if (this.mode === 'live') {
+      const desiredSizeSol = this.liveTradeSizeSol
+      const cappedSizeSol = Math.min(desiredSizeSol, this.balance * 0.95)
+      const poolCapSol = poolLiqSol * maxPoolPct
+      const sizeSol = Math.min(cappedSizeSol, poolCapSol)
+
+      return {
+        desiredSizeSol,
+        cappedSizeSol,
+        poolCapSol,
+        sizeSol,
+        signalMultiplier: 1,
+      }
+    }
+
+    // Migration sizing is liquidity-aware:
+    // scale down in thin pools (reduce churn/no-pump damage), scale up in deeper pools (capture upside).
+    const migrationMultiplier =
+      poolLiqSol >= 120 ? 3.4 :
+      poolLiqSol >= 70 ? 3.0 :
+      poolLiqSol >= 35 ? 2.5 :
+      1.3
+
     // Signal-type multiplier: bet bigger on migrations, smaller on noisy amm swaps
     const signalMultiplier =
-      signalType === 'migration' ? 3.0 :
+      signalType === 'migration' ? migrationMultiplier :
       signalType === 'whale_buy' ? 0.75 :
       signalType === 'new_pool'  ? 1.0 :
       0.2  // amm_activity
 
     const desiredSizeSol = this.balance * capitalPct * signalMultiplier
-    const cappedSizeSol = Math.min(desiredSizeSol, this.balance * 0.95, MAX_POSITION_SOL)
+    const paperCapSol = this.balance * this.paperMaxPositionPct
+    const absoluteCapSol = this.paperMaxPositionSol ?? Number.POSITIVE_INFINITY
+    const cappedSizeSol = Math.min(desiredSizeSol, this.balance * 0.95, paperCapSol, absoluteCapSol)
     const poolCapSol = poolLiqSol * maxPoolPct
     const sizeSol = Math.min(cappedSizeSol, poolCapSol)
 

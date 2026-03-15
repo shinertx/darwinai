@@ -15,6 +15,14 @@ export function getSignalCooldownKey(signal: Pick<MarketSignal, 'mint' | 'type'>
   return `${signal.mint}:${signal.type}`
 }
 
+function createRealtimeConnection(rpcUrl: string): Connection {
+  const wsEndpoint = (process.env.WSS_URL || '').trim()
+  if (wsEndpoint) {
+    return new Connection(rpcUrl, { commitment: 'processed', wsEndpoint })
+  }
+  return new Connection(rpcUrl, 'processed')
+}
+
 export class MarketFeed extends EventEmitter {
   private ammSignalCount = 0
   private ammRateBucketStart = Date.now()
@@ -68,11 +76,14 @@ export class MarketFeed extends EventEmitter {
     }
 
     console.log('[MarketFeed] Starting PumpSwap feed...')
-    this.connection = new Connection(this.rpcUrl, 'processed')
+    this.connection = createRealtimeConnection(this.rpcUrl)
     this.fetchConnections = this.rpcUrls.map((url: string) => new Connection(url, 'confirmed'))
 
     if (this.fetchConnections.length > 1) {
       console.log('[MarketFeed] RPC pool: ' + this.fetchConnections.length + ' endpoints')
+    }
+    if ((process.env.WSS_URL || '').trim()) {
+      console.log('[MarketFeed] Using explicit WSS endpoint for subscriptions')
     }
 
     this.subscribeToPumpCore()
@@ -109,7 +120,7 @@ export class MarketFeed extends EventEmitter {
         this.ammSubscriptionId = null
       }
     }
-    this.connection = new Connection(this.rpcUrl, 'processed')
+    this.connection = createRealtimeConnection(this.rpcUrl)
     this.fetchConnections = this.rpcUrls.map((url: string) => new Connection(url, 'confirmed'))
     this.subscribeToPumpCore()
     this.subscribeToPumpAMM()

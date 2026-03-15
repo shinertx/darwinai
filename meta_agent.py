@@ -41,6 +41,13 @@ def load_env_file(path: Path, override: bool = False) -> None:
             os.environ[key] = value
 
 
+def env_flag(name: str, default: bool = False) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
 DARWIN_DIR = Path(__file__).resolve().parent
 load_env_file(DARWIN_DIR / ".env")
 load_env_file(DARWIN_DIR / ".env.local", override=True)
@@ -64,6 +71,8 @@ MODEL = os.getenv("OPENAI_MODEL", "gpt-5.3-codex")
 REASONING_EFFORT = os.getenv("OPENAI_REASONING_EFFORT", "medium").strip().lower()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
 OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
+MIRROR_DIR = os.getenv("AUTORESEARCH_MIRROR_DIR", "").strip()
+PUSH_AFTER_KEEP = env_flag("AUTORESEARCH_PUSH_AFTER_KEEP", default=False)
 
 TUNABLE_FILES = [
     "src/evolution/EvolutionEngine.ts",
@@ -354,6 +363,44 @@ def git_commit(file_path: str, message: str) -> bool:
     return True
 
 
+def mirror_kept_change(file_path: str, message: str) -> bool:
+    if not MIRROR_DIR:
+        return True
+
+    mirror_dir = Path(MIRROR_DIR).expanduser()
+    if not mirror_dir.exists():
+        log.error("  Mirror dir does not exist: %s", mirror_dir)
+        return False
+
+    source_path = DARWIN_DIR / file_path
+    target_path = mirror_dir / file_path
+    target_path.parent.mkdir(parents=True, exist_ok=True)
+    target_path.write_text(source_path.read_text())
+
+    mirror_dir_quoted = shell_quote(str(mirror_dir))
+    file_quoted = shell_quote(file_path)
+    run(f"git -C {mirror_dir_quoted} add -- {file_quoted}")
+    staged = run(f"git -C {mirror_dir_quoted} diff --cached --quiet -- {file_quoted}")
+    if staged.returncode == 0:
+        return True
+
+    commit_result = run(f"git -C {mirror_dir_quoted} commit -m {shell_quote(message)} -- {file_quoted}")
+    if commit_result.returncode != 0:
+        log.error("  Mirror commit failed:\n%s", (commit_result.stdout + commit_result.stderr)[-800:])
+        return False
+
+    if PUSH_AFTER_KEEP:
+        branch_result = run(f"git -C {mirror_dir_quoted} branch --show-current")
+        branch = (branch_result.stdout or "").strip()
+        if branch:
+            push_result = run(f"git -C {mirror_dir_quoted} push origin {shell_quote(branch)}")
+            if push_result.returncode != 0:
+                log.error("  Mirror push failed:\n%s", (push_result.stdout + push_result.stderr)[-800:])
+                return False
+
+    return True
+
+
 def file_is_dirty(file_path: str) -> bool:
     quoted = shell_quote(file_path)
     return (
@@ -506,6 +553,8 @@ def main() -> int:
     log.info("Minimum trades per window: %s", MIN_TRADES)
     log.info("Validation windows per keeper: %s", VALIDATION_WINDOWS)
     log.info("Tunable files: %s", ", ".join(TUNABLE_FILES))
+    if MIRROR_DIR:
+        log.info("Mirror worktree: %s%s", MIRROR_DIR, " (auto-push)" if PUSH_AFTER_KEEP else "")
     log.info("=" * 60)
 
     if not rebuild():
@@ -635,6 +684,8 @@ def main() -> int:
                 f"{hypothesis[:70]}"
             )
             git_commit(file_path, commit_message)
+            if not mirror_kept_change(file_path, commit_message):
+                log.warning("  Keeper mirrored locally but not to mirror worktree.")
         else:
             if not revert_file(file_path, current_code):
                 return 1

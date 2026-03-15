@@ -27,8 +27,10 @@ Darwin now uses both hard signal floors and a dynamic pool-depth guard:
 - `WHALE_BUY_MIN_LIQUIDITY_SOL=50`
 - `DARWIN_TARGET_ENTRY_POOL_PCT=0.03`
 - `DARWIN_MIN_MEANINGFUL_FILL_RATIO=0.5`
+- `DARWIN_PAPER_MAX_POSITION_PCT=0.12`
 
 That means Darwin skips pools that are obviously too thin, and it also skips signals where the pool cannot support a meaningful fraction of the intended position size.
+Paper sizing now scales with bankroll instead of freezing against a fixed `0.10 SOL` ceiling. If you want a hard paper ceiling for a test run, set `DARWIN_PAPER_MAX_POSITION_SOL`.
 
 ## Mission Assessment
 
@@ -91,6 +93,8 @@ It uses the OpenAI Responses API with:
 - `OPENAI_MODEL` defaulting to `gpt-5.3-codex`
 - `OPENAI_REASONING_EFFORT`
 - `AUTORESEARCH_TARGET_APP=darwin-paper`
+- optional `AUTORESEARCH_MIRROR_DIR` to mirror keeper commits into a clean push worktree
+- optional `AUTORESEARCH_PUSH_AFTER_KEEP=true` to push mirrored keeper commits automatically
 
 By default, autoresearch now waits for at least `30` paper trades per window and validates keeper candidates across `2` consecutive paper windows before committing them.
 
@@ -104,6 +108,7 @@ Candidates only stick when:
 - `no_pump_bail_pct` and `max_drawdown_pct` do not worsen by more than `5%` relative
 
 The autoresearch loop never stops or restarts `darwin-live`.
+If your deployment repo is not the same worktree you push from, set `AUTORESEARCH_MIRROR_DIR` so keeper commits do not get stranded only on the VM.
 
 Use the shared evaluator directly with:
 

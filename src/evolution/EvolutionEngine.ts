@@ -36,12 +36,18 @@ export class EvolutionEngine {
     const preserve = top.map((r) => r.strategy.id)
     const preserveSet = new Set(preserve)
 
-    const prioritizedCull = ranked
-      .filter((entry) => !preserveSet.has(entry.strategy.id))
-      .filter((entry) => entry.score.tier === 'hard_fail' || entry.score.tier === 'tier_c')
-      .map((entry) => entry.strategy.id)
+    const kill: string[] = []
 
-    const kill = [...prioritizedCull]
+    // Remove the weakest hard-fail and tier-C strategies first, but do not
+    // over-delete the population just because many weak genomes exist.
+    for (let index = ranked.length - 1; index >= 0 && kill.length < DELETE_BOTTOM; index--) {
+      const entry = ranked[index]
+      if (preserveSet.has(entry.strategy.id) || kill.includes(entry.strategy.id)) continue
+      if (entry.score.tier === 'hard_fail' || entry.score.tier === 'tier_c') {
+        kill.push(entry.strategy.id)
+      }
+    }
+
     if (kill.length < DELETE_BOTTOM) {
       for (let index = ranked.length - 1; index >= 0 && kill.length < DELETE_BOTTOM; index--) {
         const entry = ranked[index]

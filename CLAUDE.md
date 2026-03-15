@@ -48,6 +48,7 @@ MIGRATION_MIN_LIQUIDITY_SOL=25
 AMM_ACTIVITY_MIN_LIQUIDITY_SOL=50
 DARWIN_TARGET_ENTRY_POOL_PCT=0.03
 DARWIN_MIN_MEANINGFUL_FILL_RATIO=0.5
+DARWIN_PAPER_MAX_POSITION_PCT=0.12
 ```
 
 Live-only env:
@@ -67,9 +68,12 @@ OPENAI_REASONING_EFFORT=medium
 AUTORESEARCH_TARGET_APP=darwin-paper
 AUTORESEARCH_MIN_TRADES=30
 AUTORESEARCH_VALIDATION_WINDOWS=2
+AUTORESEARCH_MIRROR_DIR=/path/to/clean-push-worktree
+AUTORESEARCH_PUSH_AFTER_KEEP=false
 ```
 
 `darwin-paper` under PM2 runs with research cadence defaults (`DARWIN_RESEARCH_MODE=true`, `20m` / `25` trades) so generation cycles can happen within autoresearch windows.
+If the deployment repo is not the GitHub-tracking worktree, set `AUTORESEARCH_MIRROR_DIR` so keeper commits are mirrored out of the live VM repo instead of living only there.
 
 Legacy `PAPER_TRADING` and `PAPER_TRADE` values still map into the new mode logic temporarily, but Darwin warns until `DARWIN_MODE` is set explicitly.
 

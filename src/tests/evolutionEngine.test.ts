@@ -56,3 +56,31 @@ test('evolution preserves aligned tiers before culling weak ones', () => {
   assert.ok(['tier_c_1', 'tier_c_2', 'tier_c_3', 'hard_fail_1', 'hard_fail_2', 'hard_fail_3'].every((id) => killSet.has(id)))
   assert.equal(result.newGenomes.length, result.kill.length)
 })
+
+test('evolution does not over-delete when many weak genomes exist', () => {
+  const engine = new EvolutionEngine()
+  const strategies: StrategyRecord[] = [
+    record('tier_a_1', buildTierATrades(), 1),
+    record('tier_a_2', buildTierATrades(), 1),
+    record('tier_b_1', buildTierBTrades(), 1),
+    record('tier_b_2', buildTierBTrades(), 1),
+    record('tier_c_1', buildTierCTrades(), 1),
+    record('tier_c_2', buildTierCTrades(), 1),
+    record('tier_c_3', buildTierCTrades(), 1),
+    record('tier_c_4', buildTierCTrades(), 1),
+    record('tier_c_5', buildTierCTrades(), 1),
+    record('tier_c_6', buildTierCTrades(), 1),
+    record('hard_fail_1', buildHardFailTrades(), 1),
+    record('hard_fail_2', buildHardFailTrades(), 1),
+    record('hard_fail_3', buildHardFailTrades(), 1),
+    record('hard_fail_4', buildHardFailTrades(), 1),
+    record('hard_fail_5', buildHardFailTrades(), 1),
+    record('hard_fail_6', buildHardFailTrades(), 1),
+  ]
+
+  const result = engine.runGeneration(strategies)
+
+  assert.equal(result.kill.length, 10)
+  assert.equal(result.newGenomes.length, 10)
+  assert.ok(result.preserve.every((id) => id.startsWith('tier_a_') || id.startsWith('tier_b_')))
+})

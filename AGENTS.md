@@ -21,6 +21,7 @@
   - docs, logging schema, or automation logic
 - Autoresearch must target `darwin-paper` only.
 - Autoresearch commits must stage only the tuned source file, never `git add -A`.
+- If the deployment repo differs from the GitHub push worktree, mirror keeper commits into the clean push worktree before considering the improvement durable.
 
 ## Operator Workflow
 
@@ -30,6 +31,7 @@
 - Use `pm2 start ecosystem.config.cjs --only darwin-autoresearch` only after `darwin-paper` is healthy.
 - Start `darwin-live` manually and only after paper mode has been validated.
 - `darwin-paper` under PM2 is research-tuned by default (`DARWIN_RESEARCH_MODE=true`, `20m` / `25` trades) so generation cycles can occur during autoresearch experiments.
+- Paper sizing should scale with bankroll; do not reintroduce a hard-coded fixed `0.10 SOL` ceiling in paper mode.
 
 ## Docs
 
