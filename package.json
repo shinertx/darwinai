@@ -12,6 +12,8 @@
     "start:live": "DARWIN_MODE=live node dist/index.js",
     "dev": "ts-node src/index.ts",
     "eval-window": "node dist/cli/eval-window.js",
+    "eval-window:stable": "DB_PATH=data/stable/darwin.db node dist/cli/eval-window.js",
+    "eval-window:research": "DB_PATH=data/research/darwin.db node dist/cli/eval-window.js",
     "test": "npm run build && node --test dist/tests/*.test.js",
     "pm2:start:paper:stable": "pm2 start ecosystem.config.cjs --only darwin-paper-stable",
     "pm2:start:paper:research": "pm2 start ecosystem.config.cjs --only darwin-paper-research",

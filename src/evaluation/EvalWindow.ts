@@ -1,3 +1,4 @@
+import fs from 'fs'
 import path from 'path'
 import Database from 'better-sqlite3'
 import { getStartingBalanceSol } from '../config/mission'
@@ -8,6 +9,22 @@ export interface EvalWindowOptions {
   sinceTsMs: number
   dbPath?: string
   now?: number
+}
+
+function resolveDbPath(configuredPath?: string): string {
+  const explicitPath = configuredPath || process.env.DB_PATH
+  if (explicitPath) {
+    return path.isAbsolute(explicitPath)
+      ? explicitPath
+      : path.resolve(process.cwd(), explicitPath)
+  }
+
+  const stablePath = path.resolve(process.cwd(), 'data/stable/darwin.db')
+  if (fs.existsSync(stablePath)) {
+    return stablePath
+  }
+
+  return path.resolve(process.cwd(), 'darwin.db')
 }
 
 type TradeRow = {
@@ -37,7 +54,7 @@ type TradeRow = {
 }
 
 export function evaluateTradeWindow(options: EvalWindowOptions): FitnessScore {
-  const dbPath = options.dbPath || path.resolve(process.cwd(), 'darwin.db')
+  const dbPath = resolveDbPath(options.dbPath)
   const db = new Database(dbPath, { readonly: true })
   try {
     let rows: TradeRow[] = []

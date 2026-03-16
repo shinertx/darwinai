@@ -99,11 +99,15 @@ pm2 logs darwin-autoresearch --lines 50 --nostream
 
 # Evaluate paper performance
 npm run eval-window -- 0
+npm run eval-window:stable -- 0
+npm run eval-window:research -- 0
 python3 eval.py 0
 
 # Stop live mode if it was started
 pm2 stop darwin-live
 ```
+
+When split paper lanes exist, the generic evaluator commands default to `data/stable/darwin.db`.
 
 ## Autoresearch rules
 

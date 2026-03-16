@@ -26,7 +26,8 @@
 ## Operator Workflow
 
 - Build after TypeScript changes with `npm run build`.
-- Use `npm run eval-window -- <since_ms>` or `python3 eval.py <since_ms>` for paper-window grading.
+- Use `npm run eval-window -- <since_ms>` or `python3 eval.py <since_ms>` for stable-lane grading by default once split data exists.
+- Use `npm run eval-window:stable -- <since_ms>` or `npm run eval-window:research -- <since_ms>` when you need to force a specific paper lane.
 - Use `pm2 start ecosystem.config.cjs --only darwin-paper-stable` for stable paper mode.
 - Use `pm2 start ecosystem.config.cjs --only darwin-paper-research` for research paper mode.
 - Use `pm2 start ecosystem.config.cjs --only darwin-autoresearch` only after `darwin-paper-research` is healthy.

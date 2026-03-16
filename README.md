@@ -123,8 +123,12 @@ Use the shared evaluator directly with:
 
 ```bash
 npm run eval-window -- 0
+npm run eval-window:stable -- 0
+npm run eval-window:research -- 0
 python3 eval.py 0
 ```
+
+When split paper lanes exist, the generic `npm run eval-window -- <since_ms>` and `python3 eval.py <since_ms>` commands default to the stable lane.
 
 ## Ops Scripts
 
