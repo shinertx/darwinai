@@ -3,95 +3,243 @@
 // Uses exact same byte offsets as final-radiation PumpSwapEngine
 // ============================================================================
 
-import { Connection, PublicKey } from '@solana/web3.js'
+import { AccountInfo, Connection, PublicKey } from '@solana/web3.js'
+import { createSolanaConnection } from '../rpc/solanaConnection'
 
 const WSOL_MINT = 'So11111111111111111111111111111111111111112'
 
 // PumpSwap pool account layout (Anchor IDL offsets)
-const OFFSET_BASE_MINT  = 8 + 1 + 2 + 32        // 43
-const OFFSET_QUOTE_MINT = OFFSET_BASE_MINT  + 32  // 75
-const OFFSET_LP_MINT    = OFFSET_QUOTE_MINT + 32  // 107
-const OFFSET_BASE_VAULT = OFFSET_LP_MINT    + 32  // 139
-const OFFSET_QUOTE_VAULT = OFFSET_BASE_VAULT + 32  // 171
-const MIN_POOL_SIZE     = OFFSET_QUOTE_VAULT + 32  // 203
+const OFFSET_BASE_MINT = 8 + 1 + 2 + 32
+const OFFSET_QUOTE_MINT = OFFSET_BASE_MINT + 32
+const OFFSET_BASE_VAULT = OFFSET_QUOTE_MINT + 64
+const OFFSET_QUOTE_VAULT = OFFSET_BASE_VAULT + 32
+const MIN_POOL_SIZE = OFFSET_QUOTE_VAULT + 32
+
+// SPL Token layouts
+const TOKEN_ACCOUNT_AMOUNT_OFFSET = 64
+const TOKEN_ACCOUNT_MIN_SIZE = TOKEN_ACCOUNT_AMOUNT_OFFSET + 8
+const MINT_DECIMALS_OFFSET = 44
+const MINT_ACCOUNT_MIN_SIZE = MINT_DECIMALS_OFFSET + 1
 
 // PumpFun standard: 793.1M tokens go to PumpSwap at graduation
 const PUMPFUN_POOL_TOKENS = 793_100_000
 
-// Cache pool prices (3s TTL)
+function parsePositiveInt(value: string | undefined, fallback: number): number {
+  const parsed = Number.parseInt(value || '', 10)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
+}
+
+function chunk<T>(items: T[], size: number): T[][] {
+  const chunks: T[][] = []
+  for (let index = 0; index < items.length; index += size) {
+    chunks.push(items.slice(index, index + size))
+  }
+  return chunks
+}
+
+function readTokenAmount(account: AccountInfo<Buffer> | null): number | null {
+  if (!account || account.data.length < TOKEN_ACCOUNT_MIN_SIZE) return null
+  return Number(account.data.readBigUInt64LE(TOKEN_ACCOUNT_AMOUNT_OFFSET))
+}
+
+function readMintDecimals(account: AccountInfo<Buffer> | null): number | null {
+  if (!account || account.data.length < MINT_ACCOUNT_MIN_SIZE) return null
+  return account.data.readUInt8(MINT_DECIMALS_OFFSET)
+}
+
+type PoolMetadata = {
+  baseVault: PublicKey
+  quoteVault: PublicKey
+  solSide: 'base' | 'quote'
+  tokenDecimals: number
+}
+
+const CACHE_TTL_MS = parsePositiveInt(process.env.DARWIN_POOL_PRICE_CACHE_TTL_MS, 5000)
+const RPC_BATCH_SIZE = parsePositiveInt(process.env.DARWIN_RPC_BATCH_SIZE, 50)
 const poolPriceCache = new Map<string, { price: number; ts: number }>()
-const CACHE_TTL_MS = 3000
+const poolMetadataCache = new Map<string, PoolMetadata>()
+const poolPriceInFlight = new Map<string, Promise<number | null>>()
 
 export class PoolPriceService {
   private connection: Connection
 
   constructor(rpcUrl: string) {
-    this.connection = new Connection(rpcUrl, 'confirmed')
+    this.connection = createSolanaConnection(rpcUrl, 'confirmed')
   }
 
-  // Get price from PumpSwap pool reserves (returns SOL per token)
   public async getPriceFromPool(poolAddress: string): Promise<number | null> {
     const cached = poolPriceCache.get(poolAddress)
     if (cached && Date.now() - cached.ts < CACHE_TTL_MS) return cached.price
 
-    try {
-      const poolPubkey = new PublicKey(poolAddress)
-      const poolAccount = await this.connection.getAccountInfo(poolPubkey)
-      if (!poolAccount || poolAccount.data.length < MIN_POOL_SIZE) return null
+    const inflight = poolPriceInFlight.get(poolAddress)
+    if (inflight) return inflight
 
-      const data = poolAccount.data
-      const baseMint  = new PublicKey(data.slice(OFFSET_BASE_MINT,  OFFSET_BASE_MINT  + 32))
-      const quoteMint = new PublicKey(data.slice(OFFSET_QUOTE_MINT, OFFSET_QUOTE_MINT + 32))
-      const baseVault  = new PublicKey(data.slice(OFFSET_BASE_VAULT,  OFFSET_BASE_VAULT  + 32))
-      const quoteVault = new PublicKey(data.slice(OFFSET_QUOTE_VAULT, OFFSET_QUOTE_VAULT + 32))
+    const promise = this.getPricesFromPools([poolAddress])
+      .then((prices) => prices.get(poolAddress) ?? null)
+      .finally(() => {
+        poolPriceInFlight.delete(poolAddress)
+      })
 
-      const [baseInfo, quoteInfo] = await Promise.all([
-        this.connection.getTokenAccountBalance(baseVault).catch(() => null),
-        this.connection.getTokenAccountBalance(quoteVault).catch(() => null),
-      ])
+    poolPriceInFlight.set(poolAddress, promise)
+    return promise
+  }
 
-      if (!baseInfo || !quoteInfo) return null
+  public async getPricesFromPools(poolAddresses: string[]): Promise<Map<string, number>> {
+    const results = new Map<string, number>()
+    const uniquePools = Array.from(new Set(poolAddresses.filter((pool) => pool && pool.length > 10)))
 
-      const baseAmt  = Number(baseInfo.value.amount)
-      const quoteAmt = Number(quoteInfo.value.amount)
-      if (baseAmt === 0 || quoteAmt === 0) return null
+    if (uniquePools.length === 0) {
+      return results
+    }
 
-      // Determine which side is SOL
-      const baseIsSOL  = baseMint.toBase58()  === WSOL_MINT
-      const quoteIsSOL = quoteMint.toBase58() === WSOL_MINT
-
-      let solReserveRaw: number
-      let tokenReserveRaw: number
-      let tokenDecimals: number
-
-      if (baseIsSOL) {
-        solReserveRaw   = baseAmt
-        tokenReserveRaw = quoteAmt
-        tokenDecimals   = quoteInfo.value.decimals
-      } else if (quoteIsSOL) {
-        solReserveRaw   = quoteAmt
-        tokenReserveRaw = baseAmt
-        tokenDecimals   = baseInfo.value.decimals
+    const now = Date.now()
+    const stalePools: string[] = []
+    for (const poolAddress of uniquePools) {
+      const cached = poolPriceCache.get(poolAddress)
+      if (cached && now - cached.ts < CACHE_TTL_MS) {
+        results.set(poolAddress, cached.price)
       } else {
-        return null // neither side is SOL
+        stalePools.push(poolAddress)
       }
+    }
 
-      const solReserve   = solReserveRaw / 1e9
-      const tokenReserve = tokenReserveRaw / Math.pow(10, tokenDecimals)
-      if (tokenReserve === 0) return null
+    if (stalePools.length === 0) {
+      return results
+    }
+
+    const metadataByPool = await this.ensurePoolMetadata(stalePools)
+    const vaultPubkeys = new Map<string, PublicKey>()
+    for (const metadata of metadataByPool.values()) {
+      vaultPubkeys.set(metadata.baseVault.toBase58(), metadata.baseVault)
+      vaultPubkeys.set(metadata.quoteVault.toBase58(), metadata.quoteVault)
+    }
+
+    const vaultAccounts = await this.fetchAccounts(Array.from(vaultPubkeys.values()))
+
+    for (const poolAddress of stalePools) {
+      const metadata = metadataByPool.get(poolAddress)
+      if (!metadata) continue
+
+      const baseAmountRaw = readTokenAmount(vaultAccounts.get(metadata.baseVault.toBase58()) ?? null)
+      const quoteAmountRaw = readTokenAmount(vaultAccounts.get(metadata.quoteVault.toBase58()) ?? null)
+      if (baseAmountRaw == null || quoteAmountRaw == null) continue
+
+      const solReserveRaw = metadata.solSide === 'base' ? baseAmountRaw : quoteAmountRaw
+      const tokenReserveRaw = metadata.solSide === 'base' ? quoteAmountRaw : baseAmountRaw
+      if (solReserveRaw <= 0 || tokenReserveRaw <= 0) continue
+
+      const solReserve = solReserveRaw / 1e9
+      const tokenReserve = tokenReserveRaw / Math.pow(10, metadata.tokenDecimals)
+      if (tokenReserve <= 0) continue
 
       const price = solReserve / tokenReserve
       poolPriceCache.set(poolAddress, { price, ts: Date.now() })
-      return price
-
-    } catch (_) {
-      return null
+      results.set(poolAddress, price)
     }
+
+    return results
   }
 
   // Estimate price for new migration where pool address may not be known
   // PumpFun graduates with ~793.1M tokens at liquiditySol SOL
   public estimateMigrationPrice(liquiditySol: number): number {
     return liquiditySol / PUMPFUN_POOL_TOKENS
+  }
+
+  private async ensurePoolMetadata(poolAddresses: string[]): Promise<Map<string, PoolMetadata>> {
+    const resolved = new Map<string, PoolMetadata>()
+    const uncachedPools: string[] = []
+
+    for (const poolAddress of poolAddresses) {
+      const cached = poolMetadataCache.get(poolAddress)
+      if (cached) {
+        resolved.set(poolAddress, cached)
+      } else {
+        uncachedPools.push(poolAddress)
+      }
+    }
+
+    if (uncachedPools.length === 0) {
+      return resolved
+    }
+
+    const poolPubkeys: PublicKey[] = []
+    const poolAddressByPubkey = new Map<string, string>()
+    for (const poolAddress of uncachedPools) {
+      try {
+        const pubkey = new PublicKey(poolAddress)
+        poolPubkeys.push(pubkey)
+        poolAddressByPubkey.set(pubkey.toBase58(), poolAddress)
+      } catch (_) {}
+    }
+
+    const poolAccounts = await this.fetchAccounts(poolPubkeys)
+    const pending = new Map<string, { baseVault: PublicKey; quoteVault: PublicKey; solSide: 'base' | 'quote'; tokenMint: PublicKey }>()
+    const mintPubkeys = new Map<string, PublicKey>()
+
+    for (const poolPubkey of poolPubkeys) {
+      const poolAddress = poolAddressByPubkey.get(poolPubkey.toBase58())
+      if (!poolAddress) continue
+
+      const account = poolAccounts.get(poolPubkey.toBase58()) ?? null
+      if (!account || account.data.length < MIN_POOL_SIZE) continue
+
+      const data = account.data
+      const baseMint = new PublicKey(data.slice(OFFSET_BASE_MINT, OFFSET_BASE_MINT + 32))
+      const quoteMint = new PublicKey(data.slice(OFFSET_QUOTE_MINT, OFFSET_QUOTE_MINT + 32))
+      const baseVault = new PublicKey(data.slice(OFFSET_BASE_VAULT, OFFSET_BASE_VAULT + 32))
+      const quoteVault = new PublicKey(data.slice(OFFSET_QUOTE_VAULT, OFFSET_QUOTE_VAULT + 32))
+
+      if (baseMint.toBase58() === WSOL_MINT) {
+        pending.set(poolAddress, {
+          baseVault,
+          quoteVault,
+          solSide: 'base',
+          tokenMint: quoteMint,
+        })
+        mintPubkeys.set(quoteMint.toBase58(), quoteMint)
+      } else if (quoteMint.toBase58() === WSOL_MINT) {
+        pending.set(poolAddress, {
+          baseVault,
+          quoteVault,
+          solSide: 'quote',
+          tokenMint: baseMint,
+        })
+        mintPubkeys.set(baseMint.toBase58(), baseMint)
+      }
+    }
+
+    const mintAccounts = await this.fetchAccounts(Array.from(mintPubkeys.values()))
+    for (const [poolAddress, metadata] of pending) {
+      const mintAccount = mintAccounts.get(metadata.tokenMint.toBase58()) ?? null
+      const tokenDecimals = readMintDecimals(mintAccount)
+      if (tokenDecimals == null) continue
+
+      const resolvedMetadata: PoolMetadata = {
+        baseVault: metadata.baseVault,
+        quoteVault: metadata.quoteVault,
+        solSide: metadata.solSide,
+        tokenDecimals,
+      }
+
+      poolMetadataCache.set(poolAddress, resolvedMetadata)
+      resolved.set(poolAddress, resolvedMetadata)
+    }
+
+    return resolved
+  }
+
+  private async fetchAccounts(pubkeys: PublicKey[]): Promise<Map<string, AccountInfo<Buffer> | null>> {
+    const accounts = new Map<string, AccountInfo<Buffer> | null>()
+    if (pubkeys.length === 0) return accounts
+
+    for (const batch of chunk(pubkeys, RPC_BATCH_SIZE)) {
+      const infos = await this.connection.getMultipleAccountsInfo(batch)
+      batch.forEach((pubkey, index) => {
+        accounts.set(pubkey.toBase58(), infos[index] ?? null)
+      })
+    }
+
+    return accounts
   }
 }

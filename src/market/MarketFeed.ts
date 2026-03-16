@@ -6,10 +6,12 @@
 import EventEmitter from 'events'
 import { Connection, PublicKey } from '@solana/web3.js'
 import { MarketSignal, PricePoint } from '../types'
+import { createSolanaConnection } from '../rpc/solanaConnection'
 
 const PUMP_CORE_PROGRAM_ID = '6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P'
 const PUMP_AMM_PROGRAM_ID = 'pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA'
 const PRICE_HISTORY_MAX = 20
+const TX_CACHE_TTL_MS = 30 * 1000
 
 export function getSignalCooldownKey(signal: Pick<MarketSignal, 'mint' | 'type'>): string {
   return `${signal.mint}:${signal.type}`
@@ -18,9 +20,9 @@ export function getSignalCooldownKey(signal: Pick<MarketSignal, 'mint' | 'type'>
 function createRealtimeConnection(rpcUrl: string): Connection {
   const wsEndpoint = (process.env.WSS_URL || '').trim()
   if (wsEndpoint) {
-    return new Connection(rpcUrl, { commitment: 'processed', wsEndpoint })
+    return createSolanaConnection(rpcUrl, 'processed', { wsEndpoint })
   }
-  return new Connection(rpcUrl, 'processed')
+  return createSolanaConnection(rpcUrl, 'processed')
 }
 
 export class MarketFeed extends EventEmitter {
@@ -43,6 +45,8 @@ export class MarketFeed extends EventEmitter {
   private rpcUrls: string[] = []
   private priceHistory: Map<string, PricePoint[]> = new Map()
   private signalCooldownMs = 5000
+  private txCache: Map<string, { tx: any; ts: number }> = new Map()
+  private txInFlight: Map<string, Promise<any>> = new Map()
 
   constructor() {
     super()
@@ -77,7 +81,7 @@ export class MarketFeed extends EventEmitter {
 
     console.log('[MarketFeed] Starting PumpSwap feed...')
     this.connection = createRealtimeConnection(this.rpcUrl)
-    this.fetchConnections = this.rpcUrls.map((url: string) => new Connection(url, 'confirmed'))
+    this.fetchConnections = this.rpcUrls.map((url: string) => createSolanaConnection(url, 'confirmed'))
 
     if (this.fetchConnections.length > 1) {
       console.log('[MarketFeed] RPC pool: ' + this.fetchConnections.length + ' endpoints')
@@ -103,6 +107,9 @@ export class MarketFeed extends EventEmitter {
       for (const [key, ts] of this.recentSignals) {
         if (now - ts > this.signalCooldownMs * 2) this.recentSignals.delete(key)
       }
+      for (const [signature, cached] of this.txCache) {
+        if (now - cached.ts > TX_CACHE_TTL_MS) this.txCache.delete(signature)
+      }
     }, 60000)
 
     return true
@@ -121,7 +128,7 @@ export class MarketFeed extends EventEmitter {
       }
     }
     this.connection = createRealtimeConnection(this.rpcUrl)
-    this.fetchConnections = this.rpcUrls.map((url: string) => new Connection(url, 'confirmed'))
+    this.fetchConnections = this.rpcUrls.map((url: string) => createSolanaConnection(url, 'confirmed'))
     this.subscribeToPumpCore()
     this.subscribeToPumpAMM()
     this.lastSignalAt = Date.now()
@@ -226,20 +233,11 @@ export class MarketFeed extends EventEmitter {
   private async processAMMEvent(signature: string, eventType: 'migration' | 'new_pool'): Promise<void> {
     if (!this.connection) return
     try {
-      // Migrations bypass the activeAmmFetches throttle — they have priority.
-      // Retry up to 5x with 400ms delay in case TX not yet indexed by RPC.
-      const conn = this.fetchConnections[0] || this.connection
-      let tx: any = null
-      for (let attempt = 0; attempt < 5; attempt++) {
-        if (attempt > 0) await new Promise(r => setTimeout(r, 400))
-        try {
-          tx = await conn.getParsedTransaction(signature, {
-            maxSupportedTransactionVersion: 0,
-            commitment: 'confirmed',
-          })
-          if (tx?.meta) break
-        } catch (_) {}
-      }
+      const tx = await this.fetchTransaction(signature, 'amm', {
+        attempts: 5,
+        retryDelayMs: 400,
+        bypassThrottle: true,
+      })
       if (!tx || !tx.meta) {
         console.log('[MarketFeed] Migration TX not fetchable: ' + signature.slice(0, 8))
         return
@@ -273,14 +271,7 @@ export class MarketFeed extends EventEmitter {
     if (!this.connection) return
     try {
       await new Promise((r) => setTimeout(r, 500))
-      const conn = this.getFetchConnection()
-      let tx: any = null
-      try {
-        tx = await conn.getParsedTransaction(signature, {
-          maxSupportedTransactionVersion: 0,
-          commitment: 'confirmed',
-        })
-      } catch (_) { return }
+      const tx = await this.fetchTransaction(signature, 'amm', { attempts: 1 })
       if (!tx || !tx.meta) return
       const tokenBalances = tx.meta.postTokenBalances || []
       const relevantToken = this.findPumpToken(tokenBalances)
@@ -311,7 +302,7 @@ export class MarketFeed extends EventEmitter {
   private async processCoreEvent(signature: string): Promise<{ mint: string; solAmount: number } | null> {
     if (!this.connection) return null
     try {
-      const tx = await this.fetchTransaction(signature, 'core')
+      const tx = await this.fetchTransaction(signature, 'core', { bypassThrottle: true })
       if (!tx) return null
       const solAmount = this.extractSolAmount(tx)
       if (solAmount > 5.0) {
@@ -377,32 +368,83 @@ export class MarketFeed extends EventEmitter {
     } catch (_) { return 0 }
   }
 
-  private async fetchTransaction(signature: string, source: 'amm' | 'core' = 'amm'): Promise<any> {
+  private async fetchTransaction(
+    signature: string,
+    source: 'amm' | 'core' = 'amm',
+    options: {
+      attempts?: number
+      retryDelayMs?: number
+      bypassThrottle?: boolean
+    } = {}
+  ): Promise<any> {
     if (!this.connection) return null
-    if (source === 'amm') {
-      if (this.activeAmmFetches >= 4) return null
-      this.activeAmmFetches++
-    } else {
-      if (this.activeCoreFetches >= 6) return null
-      this.activeCoreFetches++
+
+    const cached = this.getCachedTransaction(signature)
+    if (cached) return cached
+
+    const inflight = this.txInFlight.get(signature)
+    if (inflight) return inflight
+
+    const promise = this.fetchTransactionUncached(signature, source, options)
+    this.txInFlight.set(signature, promise)
+
+    try {
+      const tx = await promise
+      if (tx) {
+        this.txCache.set(signature, { tx, ts: Date.now() })
+      }
+      return tx
+    } finally {
+      this.txInFlight.delete(signature)
     }
+  }
+
+  private async fetchTransactionUncached(
+    signature: string,
+    source: 'amm' | 'core',
+    options: {
+      attempts?: number
+      retryDelayMs?: number
+      bypassThrottle?: boolean
+    }
+  ): Promise<any> {
+    const bypassThrottle = options.bypassThrottle === true
+
+    if (!bypassThrottle) {
+      if (source === 'amm') {
+        if (this.activeAmmFetches >= 4) return null
+        this.activeAmmFetches++
+      } else {
+        if (this.activeCoreFetches >= 6) return null
+        this.activeCoreFetches++
+      }
+    }
+
     try {
       const conn = this.getFetchConnection()
-      for (let attempt = 0; attempt < 3; attempt++) {
+      const attempts = Math.max(1, options.attempts ?? 3)
+      const retryDelayMs = Math.max(100, options.retryDelayMs ?? 1000)
+
+      for (let attempt = 0; attempt < attempts; attempt++) {
+        if (attempt > 0) {
+          await new Promise((resolve) => setTimeout(resolve, retryDelayMs * attempt))
+        }
+
         try {
           const tx = await conn.getParsedTransaction(signature, {
             maxSupportedTransactionVersion: 0,
             commitment: 'confirmed',
           })
           if (tx) return tx
-        } catch (_) {
-          if (attempt < 2) await new Promise((r) => setTimeout(r, Math.pow(2, attempt) * 1000))
-        }
+        } catch (_) {}
       }
     } finally {
-      if (source === 'amm') this.activeAmmFetches--
-      else this.activeCoreFetches--
+      if (!bypassThrottle) {
+        if (source === 'amm') this.activeAmmFetches--
+        else this.activeCoreFetches--
+      }
     }
+
     return null
   }
 
@@ -451,5 +493,15 @@ export class MarketFeed extends EventEmitter {
     const conn = this.fetchConnections[this.fetchIndex % this.fetchConnections.length]
     this.fetchIndex++
     return conn
+  }
+
+  private getCachedTransaction(signature: string): any | null {
+    const cached = this.txCache.get(signature)
+    if (!cached) return null
+    if (Date.now() - cached.ts > TX_CACHE_TTL_MS) {
+      this.txCache.delete(signature)
+      return null
+    }
+    return cached.tx
   }
 }

@@ -17,6 +17,7 @@ import BN from 'bn.js'
 import bs58 from 'bs58'
 import { v4 as uuidv4 } from 'uuid'
 import { Genome, MarketSignal, Position, ClosedTrade } from '../types'
+import { createSolanaConnection } from '../rpc/solanaConnection'
 
 const LIVE_SIZE_SOL         = parseFloat(process.env.LIVE_TRADE_SIZE_SOL  || '0.001')
 const MIN_BALANCE_SOL       = parseFloat(process.env.LIVE_MIN_BALANCE_SOL || '1.0')
@@ -41,7 +42,7 @@ export class LiveExecutor {
   constructor() {
     const rpcUrl = (process.env.RPC_URLS || process.env.RPC_URL || '').split(',')[0].trim()
     if (!rpcUrl) throw new Error('[Live] RPC_URL not set')
-    this.connection = new Connection(rpcUrl, 'confirmed')
+    this.connection = createSolanaConnection(rpcUrl, 'confirmed')
     this.pumpAmm    = new OnlinePumpAmmSdk(this.connection)
 
     const pk = process.env.PRIVATE_KEY || ''

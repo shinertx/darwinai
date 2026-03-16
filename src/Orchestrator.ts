@@ -15,10 +15,11 @@ import { MarketSignal, PricePoint, Genome, SignalSkipEvent } from './types'
 import { getPrimaryRpcUrl, resolveRuntimeConfig, RuntimeConfig } from './config/runtime'
 import { resolveGenerationCadence } from './config/mission'
 import { compareAssessments } from './evolution/MissionAssessment'
+import { createSolanaConnection } from './rpc/solanaConnection'
 
 const STATUS_INTERVAL_MS = 30 * 1000
 const TICK_INTERVAL_MS = 1000
-const PRICE_POLL_INTERVAL_MS = 3000
+const PRICE_POLL_INTERVAL_MS = parseInt(process.env.DARWIN_PRICE_POLL_INTERVAL_MS || '5000', 10)
 
 // Jupiter price cache
 const priceCache: Map<string, { price: number; ts: number }> = new Map()
@@ -48,6 +49,7 @@ export class Orchestrator {
   private tickHandle: NodeJS.Timeout | null = null
   private statusHandle: NodeJS.Timeout | null = null
   private pricePollHandle: NodeJS.Timeout | null = null
+  private pricePollInFlight = false
   private rpcConnection: Connection | null = null
   private startingBalance: number = parseFloat(process.env.STARTING_BALANCE_SOL || '1.0')
   private signalDistLog: { migration: number; amm: number; whale: number; other: number } = { migration: 0, amm: 0, whale: 0, other: 0 }
@@ -98,7 +100,7 @@ export class Orchestrator {
 
     const rpcUrl = getPrimaryRpcUrl(process.env)
     if (rpcUrl) {
-      this.rpcConnection = new Connection(rpcUrl, 'confirmed')
+      this.rpcConnection = createSolanaConnection(rpcUrl, 'confirmed')
       this.poolPriceService = new PoolPriceService(rpcUrl)
       console.log('[Darwin] PoolPriceService ready (direct pool reserve reads)')
     } else {
@@ -119,7 +121,11 @@ export class Orchestrator {
 
     this.tickHandle = setInterval(() => this.tickPositions(), TICK_INTERVAL_MS)
     this.statusHandle = setInterval(() => this.printStatus(), STATUS_INTERVAL_MS)
-    this.pricePollHandle = setInterval(() => this.pollPricesForOpenPositions(), PRICE_POLL_INTERVAL_MS)
+    this.pricePollHandle = setInterval(() => {
+      this.pollPricesForOpenPositions().catch((error) => {
+        console.error('[Darwin] price poll error:', error)
+      })
+    }, PRICE_POLL_INTERVAL_MS)
     setInterval(() => this.printSignalDistribution(), 5 * 60 * 1000)
 
     setTimeout(() => this.printStatus(), 5000)
@@ -393,43 +399,56 @@ export class Orchestrator {
   }
 
   private async pollPricesForOpenPositions(): Promise<void> {
+    if (this.pricePollInFlight) return
+
     const openPositions = this.liveMode && this.liveExecutor ? this.liveExecutor.getOpenPositions() : this.paperExecutor.getOpenPositions()
     if (openPositions.length === 0) return
 
-    // Collect unique mints and their associated pools
-    const mintPoolMap = new Map<string, string>()
-    const mintEntryPriceMap = new Map<string, number>()
-    for (const pos of openPositions) {
-      if (!mintPoolMap.has(pos.mint)) {
-        mintPoolMap.set(pos.mint, pos.pool || '')
-        mintEntryPriceMap.set(pos.mint, pos.entryPriceSol)
+    this.pricePollInFlight = true
+    try {
+      // Collect unique mints and their associated pools
+      const mintPoolMap = new Map<string, string>()
+      const mintEntryPriceMap = new Map<string, number>()
+      for (const pos of openPositions) {
+        if (!mintPoolMap.has(pos.mint)) {
+          mintPoolMap.set(pos.mint, pos.pool || '')
+          mintEntryPriceMap.set(pos.mint, pos.entryPriceSol)
+        }
       }
-    }
 
-    for (const [mint, pool] of mintPoolMap) {
-      try {
-        let price: number | null = null
+      const pricedPools = Array.from(new Set(
+        Array.from(mintPoolMap.values()).filter((pool) => pool && pool.length > 10)
+      ))
+      const poolPrices = this.poolPriceService
+        ? await this.poolPriceService.getPricesFromPools(pricedPools)
+        : new Map<string, number>()
 
-        // ONLY use pool reserves for ongoing price monitoring — no Jupiter fallback.
-        // Jupiter returns stale/ghost prices for tokens whose pool vaults are closed
-        // (drained/rugged), which causes phantom trillion-SOL PnL.
-        // If the pool is gone, let time_stop close the position naturally.
-        if (pool && pool.length > 10 && this.poolPriceService) {
-          price = await this.poolPriceService.getPriceFromPool(pool)
-        }
+      for (const [mint, pool] of mintPoolMap) {
+        try {
+          let price: number | null = null
 
-        if (price !== null && price > 0) {
-          // Sanity check: reject prices more than 10,000x the entry price.
-          // Real pumps are 10-100x; anything beyond signals a pool read error
-          // (e.g. inverted reserves on a nearly-drained pool).
-          const entryPrice = mintEntryPriceMap.get(mint) || 0
-          if (entryPrice > 0 && price > entryPrice * 10_000) {
-            // Silently reject — drained pool, not an error worth spamming
-            continue
+          // ONLY use pool reserves for ongoing price monitoring — no Jupiter fallback.
+          // Jupiter returns stale/ghost prices for tokens whose pool vaults are closed
+          // (drained/rugged), which causes phantom trillion-SOL PnL.
+          // If the pool is gone, let time_stop close the position naturally.
+          if (pool && pool.length > 10) {
+            price = poolPrices.get(pool) ?? null
           }
-          this.feed.addPricePoint(mint, price)
-        }
-      } catch (_) { }
+
+          if (price !== null && price > 0) {
+            // Sanity check: reject prices more than 10,000x the entry price.
+            // Real pumps are 10-100x; anything beyond signals a pool read error
+            // (e.g. inverted reserves on a nearly-drained pool).
+            const entryPrice = mintEntryPriceMap.get(mint) || 0
+            if (entryPrice > 0 && price > entryPrice * 10_000) {
+              continue
+            }
+            this.feed.addPricePoint(mint, price)
+          }
+        } catch (_) { }
+      }
+    } finally {
+      this.pricePollInFlight = false
     }
   }
 
