@@ -55,21 +55,30 @@ Selection uses hard-fail gates first, then `tier_a` / `tier_b` / `tier_c`, then 
 1. Copy `.env.example` to `.env` and fill in the RPC, websocket, and API credentials.
 2. Install dependencies with `npm install`.
 3. Build with `npm run build`.
-4. Start paper mode with `npm run start:paper`, `npm run start:paper:research`, or `pm2 start ecosystem.config.cjs --only darwin-paper`.
+4. Start stable paper mode with `npm run start:paper:stable` or `pm2 start ecosystem.config.cjs --only darwin-paper-stable`.
+5. Start research paper mode with `npm run start:paper:research` or `pm2 start ecosystem.config.cjs --only darwin-paper-research`.
 
 ## PM2 Profiles
 
-- `darwin-paper`: default paper/research app; the PM2 profile enables research cadence (`20m` or `25` trades) so Darwin can evolve inside autoresearch windows
+- `darwin-paper-stable`: long-running paper organism; not mutated by autoresearch
+- `darwin-paper-research`: research sandbox; restarted and mutated by autoresearch
 - `darwin-live`: live trading app; defined but stopped by default
-- `darwin-autoresearch`: OpenAI-driven experiment loop; targets `darwin-paper` only
+- `darwin-autoresearch`: OpenAI-driven experiment loop; targets `darwin-paper-research` only
 
 Recommended boot sequence:
 
 ```bash
 npm run build
-pm2 start ecosystem.config.cjs --only darwin-paper
+pm2 start ecosystem.config.cjs --only darwin-paper-stable
+pm2 start ecosystem.config.cjs --only darwin-paper-research
 pm2 start ecosystem.config.cjs --only darwin-autoresearch
 ```
+
+Recommended operator model:
+
+- keep `darwin-paper-stable` running continuously for clean paper evaluation
+- let `darwin-paper-research` absorb autoresearch restarts and mutations
+- promote only proven keepers from research into stable
 
 Live mode stays manual:
 
@@ -92,15 +101,15 @@ It uses the OpenAI Responses API with:
 - `OPENAI_API_KEY`
 - `OPENAI_MODEL` defaulting to `gpt-5.3-codex`
 - `OPENAI_REASONING_EFFORT`
-- `AUTORESEARCH_TARGET_APP=darwin-paper`
+- `AUTORESEARCH_TARGET_APP=darwin-paper-research`
 - optional `AUTORESEARCH_MIRROR_DIR` to mirror keeper commits into a clean push worktree
 - optional `AUTORESEARCH_PUSH_AFTER_KEEP=true` to push mirrored keeper commits automatically
 
 By default, autoresearch now waits for at least `30` paper trades per window and validates keeper candidates across `2` consecutive paper windows before committing them.
 
-When `DARWIN_RESEARCH_MODE=true`, Darwin uses research-friendly generation defaults of `20` minutes or `25` trades unless you override them explicitly. Standard paper/live defaults remain `60` minutes or `75` trades.
+When `DARWIN_RESEARCH_MODE=true`, Darwin uses research-friendly generation defaults of `20` minutes or `25` trades unless you override them explicitly. Stable paper defaults remain `60` minutes or `75` trades.
 
-Candidates only stick when:
+Candidates should be promoted from research to stable only when:
 
 - every validation window clears hard-fail gates
 - the aggregate candidate improves the mission rank tuple over baseline

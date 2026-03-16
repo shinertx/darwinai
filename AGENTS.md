@@ -19,7 +19,7 @@
   - `src/evolution/MissionAssessment.ts`
   - `src/evaluation/*`
   - docs, logging schema, or automation logic
-- Autoresearch must target `darwin-paper` only.
+- Autoresearch must target `darwin-paper-research` only.
 - Autoresearch commits must stage only the tuned source file, never `git add -A`.
 - If the deployment repo differs from the GitHub push worktree, mirror keeper commits into the clean push worktree before considering the improvement durable.
 
@@ -27,10 +27,12 @@
 
 - Build after TypeScript changes with `npm run build`.
 - Use `npm run eval-window -- <since_ms>` or `python3 eval.py <since_ms>` for paper-window grading.
-- Use `pm2 start ecosystem.config.cjs --only darwin-paper` for paper mode.
-- Use `pm2 start ecosystem.config.cjs --only darwin-autoresearch` only after `darwin-paper` is healthy.
+- Use `pm2 start ecosystem.config.cjs --only darwin-paper-stable` for stable paper mode.
+- Use `pm2 start ecosystem.config.cjs --only darwin-paper-research` for research paper mode.
+- Use `pm2 start ecosystem.config.cjs --only darwin-autoresearch` only after `darwin-paper-research` is healthy.
 - Start `darwin-live` manually and only after paper mode has been validated.
-- `darwin-paper` under PM2 is research-tuned by default (`DARWIN_RESEARCH_MODE=true`, `20m` / `25` trades) so generation cycles can occur during autoresearch experiments.
+- `darwin-paper-stable` is the clean measurement lane.
+- `darwin-paper-research` is the mutation lane and is research-tuned by default (`DARWIN_RESEARCH_MODE=true`, `20m` / `25` trades).
 - Paper sizing should scale with bankroll; do not reintroduce a hard-coded fixed `0.10 SOL` ceiling in paper mode.
 
 ## Docs

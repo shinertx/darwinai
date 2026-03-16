@@ -6,13 +6,15 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
-    "start:paper": "DARWIN_MODE=paper node dist/index.js",
-    "start:paper:research": "DARWIN_MODE=paper DARWIN_RESEARCH_MODE=true DARWIN_GENERATION_INTERVAL_MIN=20 DARWIN_GENERATION_TRADE_THRESHOLD=25 node dist/index.js",
+    "start:paper": "npm run start:paper:stable",
+    "start:paper:stable": "DARWIN_MODE=paper DARWIN_RESEARCH_MODE=false DARWIN_GENERATION_INTERVAL_MIN=60 DARWIN_GENERATION_TRADE_THRESHOLD=75 DB_PATH=data/stable/darwin.db LOG_DIR=logs/stable TRADES_PATH=data/stable/trades.jsonl GRAVEYARD_PATH=data/stable/graveyard.jsonl GENERATION_LOG_PATH=logs/stable/generation_log.jsonl BANKROLL_PATH=logs/stable/bankroll.jsonl SIGNAL_SKIPS_PATH=logs/stable/signal_skips.jsonl node dist/index.js",
+    "start:paper:research": "DARWIN_MODE=paper DARWIN_RESEARCH_MODE=true DARWIN_GENERATION_INTERVAL_MIN=20 DARWIN_GENERATION_TRADE_THRESHOLD=25 DB_PATH=data/research/darwin.db LOG_DIR=logs/research TRADES_PATH=data/research/trades.jsonl GRAVEYARD_PATH=data/research/graveyard.jsonl GENERATION_LOG_PATH=logs/research/generation_log.jsonl BANKROLL_PATH=logs/research/bankroll.jsonl SIGNAL_SKIPS_PATH=logs/research/signal_skips.jsonl node dist/index.js",
     "start:live": "DARWIN_MODE=live node dist/index.js",
     "dev": "ts-node src/index.ts",
     "eval-window": "node dist/cli/eval-window.js",
     "test": "npm run build && node --test dist/tests/*.test.js",
-    "pm2:start:paper": "pm2 start ecosystem.config.cjs --only darwin-paper",
+    "pm2:start:paper:stable": "pm2 start ecosystem.config.cjs --only darwin-paper-stable",
+    "pm2:start:paper:research": "pm2 start ecosystem.config.cjs --only darwin-paper-research",
     "pm2:start:live": "pm2 start ecosystem.config.cjs --only darwin-live",
     "pm2:start:autoresearch": "pm2 start ecosystem.config.cjs --only darwin-autoresearch"
   },

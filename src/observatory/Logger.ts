@@ -10,6 +10,14 @@ import { Genome, FitnessScore, ClosedTrade, GenerationResult, MarketSignal } fro
 const LOG_DIR = process.env.LOG_DIR || path.resolve(process.cwd(), 'logs')
 const DB_PATH = process.env.DB_PATH || path.resolve(process.cwd(), 'darwin.db')
 
+function resolveOutputPath(envName: string, fallbackPath: string): string {
+  const configured = process.env[envName]
+  if (!configured) return fallbackPath
+  return path.isAbsolute(configured)
+    ? configured
+    : path.resolve(process.cwd(), configured)
+}
+
 export class Logger {
   private db!: Database.Database
   private graveyardPath: string
@@ -22,14 +30,21 @@ export class Logger {
     // Ensure log dir exists
     fs.mkdirSync(LOG_DIR, { recursive: true })
 
-    this.graveyardPath = path.join(process.cwd(), 'graveyard.jsonl')
-    this.generationLogPath = path.join(LOG_DIR, 'generation_log.jsonl')
-    this.tradesPath = path.join(process.cwd(), 'trades.jsonl')
-    this.bankrollPath = path.join(LOG_DIR, 'bankroll.jsonl')
-    this.signalSkipsPath = path.join(LOG_DIR, 'signal_skips.jsonl')
+    this.graveyardPath = resolveOutputPath('GRAVEYARD_PATH', path.join(process.cwd(), 'graveyard.jsonl'))
+    this.generationLogPath = resolveOutputPath('GENERATION_LOG_PATH', path.join(LOG_DIR, 'generation_log.jsonl'))
+    this.tradesPath = resolveOutputPath('TRADES_PATH', path.join(process.cwd(), 'trades.jsonl'))
+    this.bankrollPath = resolveOutputPath('BANKROLL_PATH', path.join(LOG_DIR, 'bankroll.jsonl'))
+    this.signalSkipsPath = resolveOutputPath('SIGNAL_SKIPS_PATH', path.join(LOG_DIR, 'signal_skips.jsonl'))
   }
 
   public initDb(): void {
+    fs.mkdirSync(path.dirname(DB_PATH), { recursive: true })
+    fs.mkdirSync(path.dirname(this.graveyardPath), { recursive: true })
+    fs.mkdirSync(path.dirname(this.generationLogPath), { recursive: true })
+    fs.mkdirSync(path.dirname(this.tradesPath), { recursive: true })
+    fs.mkdirSync(path.dirname(this.bankrollPath), { recursive: true })
+    fs.mkdirSync(path.dirname(this.signalSkipsPath), { recursive: true })
+
     this.db = new Database(DB_PATH)
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS trades (

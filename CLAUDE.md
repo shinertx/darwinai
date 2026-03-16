@@ -13,19 +13,21 @@ Autoresearch is a separate OpenAI-driven loop that experiments only against the 
 
 - Set `DARWIN_MODE=paper` unless you are intentionally validating live trading.
 - `darwin-live` is defined in PM2 but should stay stopped unless explicitly started.
-- Autoresearch must target `darwin-paper` only and must never restart `darwin-live`.
+- Autoresearch must target `darwin-paper-research` only and must never restart `darwin-paper-stable` or `darwin-live`.
 - No secrets belong in source files, docs, or tracked scripts.
 
 ## PM2 apps
 
-- `darwin-paper`: primary paper-trading process
+- `darwin-paper-stable`: primary paper-trading process for clean evaluation
+- `darwin-paper-research`: sandbox paper-trading process for autoresearch
 - `darwin-live`: live-trading process, stopped by default
 - `darwin-autoresearch`: experiment runner, stopped by default until OpenAI env is ready
 
 Use the ecosystem file:
 
 ```bash
-pm2 start ecosystem.config.cjs --only darwin-paper
+pm2 start ecosystem.config.cjs --only darwin-paper-stable
+pm2 start ecosystem.config.cjs --only darwin-paper-research
 pm2 start ecosystem.config.cjs --only darwin-autoresearch
 pm2 start ecosystem.config.cjs --only darwin-live
 ```
@@ -65,14 +67,15 @@ Autoresearch:
 OPENAI_API_KEY=...
 OPENAI_MODEL=gpt-5.3-codex
 OPENAI_REASONING_EFFORT=medium
-AUTORESEARCH_TARGET_APP=darwin-paper
+AUTORESEARCH_TARGET_APP=darwin-paper-research
+DB_PATH=data/research/darwin.db
 AUTORESEARCH_MIN_TRADES=30
 AUTORESEARCH_VALIDATION_WINDOWS=2
 AUTORESEARCH_MIRROR_DIR=/path/to/clean-push-worktree
 AUTORESEARCH_PUSH_AFTER_KEEP=false
 ```
 
-`darwin-paper` under PM2 runs with research cadence defaults (`DARWIN_RESEARCH_MODE=true`, `20m` / `25` trades) so generation cycles can happen within autoresearch windows.
+`darwin-paper-research` under PM2 runs with research cadence defaults (`DARWIN_RESEARCH_MODE=true`, `20m` / `25` trades) so generation cycles can happen within autoresearch windows. `darwin-paper-stable` stays on standard cadence.
 If the deployment repo is not the GitHub-tracking worktree, set `AUTORESEARCH_MIRROR_DIR` so keeper commits are mirrored out of the live VM repo instead of living only there.
 
 Legacy `PAPER_TRADING` and `PAPER_TRADE` values still map into the new mode logic temporarily, but Darwin warns until `DARWIN_MODE` is set explicitly.
@@ -85,11 +88,13 @@ npm install
 npm run build
 
 # Start paper mode
-pm2 start ecosystem.config.cjs --only darwin-paper
+pm2 start ecosystem.config.cjs --only darwin-paper-stable
+pm2 start ecosystem.config.cjs --only darwin-paper-research
 
 # Check health
 pm2 list
-pm2 logs darwin-paper --lines 50 --nostream
+pm2 logs darwin-paper-stable --lines 50 --nostream
+pm2 logs darwin-paper-research --lines 50 --nostream
 pm2 logs darwin-autoresearch --lines 50 --nostream
 
 # Evaluate paper performance
@@ -109,7 +114,7 @@ pm2 stop darwin-live
   - `src/Orchestrator.ts`
   - `src/execution/BankrollManager.ts`
 - Commits must stage only the tuned file, never logs or runtime outputs.
-- If build or paper-app health fails, revert immediately and leave `darwin-paper` on the last known good build.
+- If build or paper-app health fails, revert immediately and leave `darwin-paper-research` on the last known good build.
 - Keepers must improve the shared mission rank tuple, not just a single scalar score.
 
 ## Related docs

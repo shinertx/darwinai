@@ -57,7 +57,7 @@ HISTORY_PATH = DARWIN_DIR / "autoresearch_history.json"
 PROGRAM_PATH = DARWIN_DIR / "program.md"
 TYPES_PATH = DARWIN_DIR / "src/types.ts"
 
-TARGET_APP = os.getenv("AUTORESEARCH_TARGET_APP", "darwin-paper").strip() or "darwin-paper"
+TARGET_APP = os.getenv("AUTORESEARCH_TARGET_APP", "darwin-paper-research").strip() or "darwin-paper-research"
 TARGET_APP_OUT_LOG = Path.home() / ".pm2" / "logs" / f"{TARGET_APP}-out.log"
 TARGET_APP_ERR_LOG = Path.home() / ".pm2" / "logs" / f"{TARGET_APP}-error.log"
 
