@@ -1422,6 +1422,17 @@ export class LiveExecutor {
     return await this.sellToken(position, reason, positionId)
   }
 
+  async closeExternalPositionNow(
+    position: Position,
+    reason = 'manual_external_close',
+    tokenAmountRaw?: bigint
+  ): Promise<string | null> {
+    if (tokenAmountRaw !== undefined && tokenAmountRaw > 0n) {
+      this.positionTokens.set(position.id, tokenAmountRaw)
+    }
+    return await this.sellToken(position, reason, position.id)
+  }
+
   removePosition(positionId: string): void {
     const position = this.openPositions.get(positionId)
     if (position) this.openMints.delete(position.mint)
