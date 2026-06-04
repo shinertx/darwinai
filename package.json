@@ -33,11 +33,11 @@
     "node": "22.x"
   },
   "dependencies": {
-    "@pump-fun/pump-swap-sdk": "^1.14.1",
+    "@pump-fun/pump-swap-sdk": "^1.17.0",
     "@solana/spl-token": "^0.4.14",
     "@solana/web3.js": "^1.98.4",
-    "bn.js": "^5.2.3",
     "better-sqlite3": "^9.0.0",
+    "bn.js": "^5.2.3",
     "bs58": "^6.0.0",
     "cross-fetch": "^4.1.0",
     "dotenv": "^16.0.0",
@@ -45,8 +45,8 @@
     "ws": "^7.5.10"
   },
   "devDependencies": {
-    "@types/bn.js": "^5.2.0",
     "@types/better-sqlite3": "^7.6.0",
+    "@types/bn.js": "^5.2.0",
     "@types/node": "^20.0.0",
     "@types/uuid": "^9.0.0",
     "ts-node": "^10.9.1",
