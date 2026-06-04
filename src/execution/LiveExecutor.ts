@@ -246,7 +246,7 @@ export class LiveExecutor {
     const rpcUrl = (process.env.RPC_URLS || process.env.RPC_URL || '').split(',')[0].trim()
     if (!rpcUrl) throw new Error('[Live] RPC_URL not set')
     this.connection = createSolanaConnection(rpcUrl, 'confirmed')
-    this.stateConnection = createSolanaConnection(rpcUrl, 'processed')
+    this.stateConnection = new Connection(rpcUrl, 'processed')
     this.pumpAmm = new OnlinePumpAmmSdk(this.stateConnection)
 
     const privateKey = process.env.PRIVATE_KEY || ''
