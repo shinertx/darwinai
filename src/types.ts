@@ -84,6 +84,7 @@ export interface Position {
   cappedSizeSol?: number
   poolCapSol?: number
   fillRatio?: number
+  entrySignature?: string
 }
 
 export interface ClosedTrade {

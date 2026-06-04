@@ -1,5 +1,12 @@
 # Darwin Repository Rules
 
+## Project Router
+
+- Read `/Users/benjijmac/WORKSPACE_INDEX.md` first for global operating rules.
+- Project routing lives in `/Users/benjijmac/workspace-audits/PROJECT_REGISTRY.json`; the readable map is `/Users/benjijmac/workspace-audits/PROJECT_CONVERSATION_MAP.md`.
+- This file only adds local repo/workspace instructions. More specific local instructions still win inside this repo.
+- Do not create competing project maps or move/delete folders from this local adapter.
+
 ## Safety
 
 - Default to `DARWIN_MODE=paper`.
@@ -35,6 +42,26 @@
 - `darwin-paper-stable` is the clean measurement lane.
 - `darwin-paper-research` is the mutation lane and is research-tuned by default (`DARWIN_RESEARCH_MODE=true`, `20m` / `25` trades).
 - Paper sizing should scale with bankroll; do not reintroduce a hard-coded fixed `0.10 SOL` ceiling in paper mode.
+
+## Live Canary Completion Rule
+
+- Do not mark live-migration work as finished until Darwin itself produces the target end-to-end outcome.
+- “Finished” for the live canary means all of the following are true:
+  - Darwin is running on the deployed VM in `DARWIN_MODE=live`
+  - Darwin is using the intended Settlement route for the canary environment
+  - one strategy-triggered `migration` buy reaches the live execution path
+  - in shadow mode, the logs contain a clean `settlement trace` followed by `settlement shadow result ... err:none`
+  - in funded mode, one real `0.0001 SOL` buy confirms on-chain and Darwin auto-stops cleanly after that entry
+- Do not call the task done just because:
+  - Settlement health checks pass
+  - a devnet smoke test passes
+  - direct-RPC fallback works
+  - the feed sees raw migrations
+- Use the simplest path that proves the whole organism:
+  - keep live migration-only
+  - allow only one new live entry
+  - auto-stop after the first confirmed canary entry
+  - prefer fixing the earliest upstream constraint instead of tuning downstream symptoms
 
 ## Docs
 

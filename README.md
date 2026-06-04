@@ -9,6 +9,7 @@ The project is now graded on a mission dashboard instead of a single win-rate-he
 - [GENESIS.md](./GENESIS.md): strategy vision and long-term mission
 - [CLAUDE.md](./CLAUDE.md): operator notes for the deployed system
 - [AGENTS.md](./AGENTS.md): repository rules for autonomous agents and automation
+- [docs/PROJECT1_EDGE_ITERATION.md](./docs/PROJECT1_EDGE_ITERATION.md): iterative PumpSwap edge-discovery program for Project 1
 
 ## Runtime Modes
 
@@ -86,6 +87,22 @@ Live mode stays manual:
 pm2 start ecosystem.config.cjs --only darwin-live
 ```
 
+Live mode is intentionally stricter than paper:
+
+- by default, live only considers `migration` signals so it does not burn latency on lower-value noise
+- only one live attempt is allowed per mint per cooldown window
+- live entries must be fresh, and migrations use a short readiness delay, aggressive pool-lookup timeout, and a hard max age tuned for real pool bring-up
+- only historically-qualified or currently-qualified `tier_b+` strategies are allowed to send live buys
+- Darwin chooses one best live candidate per signal instead of dogpiling every strategy onto the same mint
+
+Settlement routing is optional in live mode. If `SETTLEMENT_API_URL` and `SETTLEMENT_LAND_API_KEY` are unset, Darwin uses the direct RPC send path. If they are set, live execution uses `txready -> local sign -> land/submit -> poll job`.
+
+By default, Settlement is treated as an execution assist, not the strategy itself:
+
+- if Settlement is unavailable before a job is accepted, Darwin can fall back to direct RPC send
+- if Settlement accepts the job and it later fails, expires, or times out, Darwin treats that as a failed trade
+- set `DARWIN_SETTLEMENT_STRICT=true` only if you explicitly want Settlement to be mandatory
+
 ## Autoresearch
 
 `meta_agent.py` runs short paper-trading experiments against the approved tunable files:
@@ -106,6 +123,34 @@ It uses the OpenAI Responses API with:
 - optional `AUTORESEARCH_PUSH_AFTER_KEEP=true` to push mirrored keeper commits automatically
 
 By default, autoresearch now waits for at least `30` paper trades per window and validates keeper candidates across `2` consecutive paper windows before committing them.
+
+GitHub swarm mode is available for private multi-runner coordination. When `AUTORESEARCH_ENABLE_SWARM=true`, runners coordinate through a dedicated branch-backed memory plane instead of operating as isolated solo loops.
+
+Swarm branch roles:
+
+- `main`: stable/manual branch
+- `research/current`: auto-promoted keeper branch for the research lane
+- `swarm/state`: coordination branch for claims, results, insights, hypotheses, and best-state
+
+Required swarm env:
+
+- `AUTORESEARCH_RUNNER_ID`
+- `AUTORESEARCH_COORD_WORKTREE`
+- `AUTORESEARCH_COORD_BRANCH=swarm/state`
+- `AUTORESEARCH_RESEARCH_BRANCH=research/current`
+- `AUTORESEARCH_PUSH_REMOTE=origin`
+- `AUTORESEARCH_CLAIM_TTL_MIN=45`
+- `AUTORESEARCH_CLAIM_HEARTBEAT_MIN=5`
+- `AUTORESEARCH_SYNC_EVERY_EXPERIMENTS=1`
+
+Swarm behavior in v1:
+
+- runners claim experiments before editing
+- each experiment publishes a result JSON, an insight Markdown note, and a next-step hypothesis JSON
+- keepers auto-promote only into `research/current`
+- `swarm/best/research.json` is the source of truth for the best research keeper
+- stable and live promotion remain manual
+- if GitHub is unavailable, the runner continues locally and backfills pending publications later
 
 When `DARWIN_RESEARCH_MODE=true`, Darwin uses research-friendly generation defaults of `20` minutes or `25` trades unless you override them explicitly. Stable paper defaults remain `60` minutes or `75` trades.
 
@@ -138,7 +183,16 @@ Tracked helper scripts live in `scripts/ops/` so they work from a clean clone an
 node scripts/ops/diagnose.mjs
 node scripts/ops/check_wsol.mjs
 node scripts/ops/init_wsol_funded.mjs
+npm run analyze:pumpswap:alt-edges
 ```
+
+For a dedicated devnet proof of the Settlement path, use:
+
+```bash
+npm run smoke:settlement:devnet
+```
+
+That smoke test sends a tiny devnet transfer through the Settlement API and confirms it on-chain. It is the right first proof for Settlement routing. It is not the same thing as validating the full Darwin live trading organism, which still depends on the mainnet PumpSwap market/feed stack.
 
 ## CI
 

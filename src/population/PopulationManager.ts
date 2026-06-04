@@ -18,10 +18,17 @@ export class PopulationManager {
     this.maxPop = parseInt(process.env.DARWIN_POP_SIZE || '16', 10)
   }
 
-  public spawn(genome: Genome, isPaper = true): Strategy {
-    const strat = new Strategy(genome, isPaper)
+  public spawn(genome: Genome, isPaper = true, seededFromMemory = false): Strategy {
+    const strat = new Strategy(genome, isPaper, seededFromMemory)
     this.strategies.set(strat.id, strat)
-    console.log('[Population] Spawned strategy ' + strat.id + ' (genome: ' + genome.id + ')')
+    console.log(
+      '[Population] Spawned strategy ' +
+      strat.id +
+      ' (genome: ' +
+      genome.id +
+      (seededFromMemory ? ', source: persisted' : ', source: fresh') +
+      ')'
+    )
     return strat
   }
 

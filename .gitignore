@@ -13,6 +13,7 @@ dist/
 # Runtime data — too large / always changing
 autoresearch.log
 autoresearch_history.json
+.autoresearch-swarm/
 darwin.db
 darwin.db.*
 darwin.log

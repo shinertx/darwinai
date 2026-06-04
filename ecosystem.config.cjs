@@ -10,6 +10,15 @@ function buildPaperPaths(profile) {
   }
 }
 
+function buildMetaObserverPaths() {
+  return {
+    PUMPSWAP_META_OUTPUT_DIR: 'data/meta-observer',
+    PUMPSWAP_META_LOG_DIR: 'logs/meta-observer',
+    PUMPSWAP_CYBORG_ALERT_WINDOW_MS: process.env.PUMPSWAP_CYBORG_ALERT_WINDOW_MS || '5000',
+    PUMPSWAP_CYBORG_MAX_BUY_COMPETITORS: process.env.PUMPSWAP_CYBORG_MAX_BUY_COMPETITORS || '0',
+  }
+}
+
 module.exports = {
   apps: [
     {
@@ -53,7 +62,28 @@ module.exports = {
       interpreter: 'python3',
       env: {
         AUTORESEARCH_TARGET_APP: 'darwin-paper-research',
+        AUTORESEARCH_ENABLE_SWARM: process.env.AUTORESEARCH_ENABLE_SWARM || 'false',
+        AUTORESEARCH_RUNNER_ID: process.env.AUTORESEARCH_RUNNER_ID || 'darwin-runner-1',
+        AUTORESEARCH_COORD_BRANCH: process.env.AUTORESEARCH_COORD_BRANCH || 'swarm/state',
+        AUTORESEARCH_RESEARCH_BRANCH: process.env.AUTORESEARCH_RESEARCH_BRANCH || 'research/current',
+        AUTORESEARCH_PUSH_REMOTE: process.env.AUTORESEARCH_PUSH_REMOTE || 'origin',
+        AUTORESEARCH_COORD_WORKTREE: process.env.AUTORESEARCH_COORD_WORKTREE || '',
+        AUTORESEARCH_CLAIM_TTL_MIN: process.env.AUTORESEARCH_CLAIM_TTL_MIN || '45',
+        AUTORESEARCH_CLAIM_HEARTBEAT_MIN: process.env.AUTORESEARCH_CLAIM_HEARTBEAT_MIN || '5',
+        AUTORESEARCH_SYNC_EVERY_EXPERIMENTS: process.env.AUTORESEARCH_SYNC_EVERY_EXPERIMENTS || '1',
         DB_PATH: 'data/research/darwin.db',
+      },
+    },
+    {
+      name: 'darwin-pumpswap-meta-observer',
+      script: 'dist/cli/pumpswapMetaObserver.js',
+      cwd: __dirname,
+      stop_exit_codes: [0],
+      out_file: 'logs/meta-observer.out.log',
+      error_file: 'logs/meta-observer.error.log',
+      env: {
+        DARWIN_MODE: 'paper',
+        ...buildMetaObserverPaths(),
       },
     },
   ],

@@ -22,7 +22,10 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from datetime import datetime, timezone
 from pathlib import Path
+
+from swarm_coordinator import ClaimRecord, GitHubSwarmCoordinator
 
 
 def load_env_file(path: Path, override: bool = False) -> None:
@@ -73,6 +76,7 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
 OPENAI_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
 MIRROR_DIR = os.getenv("AUTORESEARCH_MIRROR_DIR", "").strip()
 PUSH_AFTER_KEEP = env_flag("AUTORESEARCH_PUSH_AFTER_KEEP", default=False)
+SWARM_ENABLED = env_flag("AUTORESEARCH_ENABLE_SWARM", default=False)
 
 TUNABLE_FILES = [
     "src/evolution/EvolutionEngine.ts",
@@ -99,6 +103,7 @@ logging.basicConfig(
     ],
 )
 log = logging.getLogger("autoresearch")
+swarm: GitHubSwarmCoordinator | None = None
 
 
 def run(cmd: str, env: dict[str, str] | None = None) -> subprocess.CompletedProcess[str]:
@@ -117,6 +122,17 @@ def run(cmd: str, env: dict[str, str] | None = None) -> subprocess.CompletedProc
 
 def shell_quote(value: str) -> str:
     return shlex.quote(value)
+
+
+def sleep_with_heartbeat(total_seconds: float, claim: ClaimRecord | None = None) -> None:
+    deadline = time.time() + max(0.0, total_seconds)
+    while True:
+        remaining = deadline - time.time()
+        if remaining <= 0:
+            return
+        time.sleep(min(5.0, remaining))
+        if swarm is not None:
+            swarm.heartbeat(claim)
 
 
 def extract_response_text(payload: dict) -> str:
@@ -246,7 +262,7 @@ HYPOTHESIS: <your reasoning>
 <complete file content>"""
 
 
-def eval_window(since_ts_ms: int) -> dict:
+def eval_window(since_ts_ms: int, claim: ClaimRecord | None = None) -> dict:
     def parse_assessment_output(result: subprocess.CompletedProcess[str]) -> dict:
         stdout = (result.stdout or "").strip()
         stderr = (result.stderr or "").strip()
@@ -295,10 +311,10 @@ def eval_window(since_ts_ms: int) -> dict:
                 data["_trade_count"],
                 EVAL_WAIT_MINUTES,
             )
-            time.sleep(EVAL_WAIT_MINUTES * 60)
+            sleep_with_heartbeat(EVAL_WAIT_MINUTES * 60, claim)
         except Exception as exc:
             log.error("  eval parse error: %s", exc)
-            time.sleep(60)
+            sleep_with_heartbeat(60, claim)
 
     result = run(f"python3 eval.py {since_ts_ms}")
     data = parse_assessment_output(result)
@@ -306,11 +322,11 @@ def eval_window(since_ts_ms: int) -> dict:
     return data
 
 
-def collect_window_metrics(label: str) -> dict:
+def collect_window_metrics(label: str, claim: ClaimRecord | None = None) -> dict:
     window_start = int(time.time() * 1000)
     log.info("  [%s] Waiting %s minutes for fresh paper trades...", label, EXPERIMENT_MIN)
-    time.sleep(EXPERIMENT_MIN * 60)
-    assessment = eval_window(window_start)
+    sleep_with_heartbeat(EXPERIMENT_MIN * 60, claim)
+    assessment = eval_window(window_start, claim)
     log.info("  [%s] Assessment: %s", label, summarize_assessment(assessment))
     return {"since_ts_ms": window_start, "assessment": assessment}
 
@@ -537,9 +553,138 @@ def candidate_passes(baseline: dict, aggregate: dict, window_results: list[dict]
     return True, "mission_improved"
 
 
+def failure_assessment(reason: str) -> dict:
+    return {
+        "tier": "hard_fail",
+        "rank_key": [],
+        "bankroll_growth_pct": -999.0,
+        "migration_win_rate": 0.0,
+        "no_pump_bail_pct": 100.0,
+        "max_drawdown_pct": 100.0,
+        "fill_ratio": 0.0,
+        "gate_failures": [reason],
+        "assessment_error": reason,
+    }
+
+
+def build_result_payload(
+    *,
+    experiment_id: str,
+    file_path: str,
+    hypothesis: str,
+    baseline: dict,
+    aggregate_result: dict,
+    window_results: list[dict],
+    kept: bool,
+    reason: str,
+    commit_sha: str,
+    branch: str,
+) -> dict:
+    return {
+        "experiment_id": experiment_id,
+        "runner_id": os.getenv("AUTORESEARCH_RUNNER_ID", "").strip() or "unknown",
+        "target_file": file_path,
+        "hypothesis": hypothesis,
+        "hypothesis_slug": normalize_hypothesis_slug(hypothesis),
+        "baseline_rank_key": baseline.get("rank_key", []),
+        "result_rank_key": aggregate_result.get("rank_key", []),
+        "tier": aggregate_result.get("tier"),
+        "keeper": kept,
+        "reason": reason,
+        "commit_sha": commit_sha,
+        "branch": branch,
+        "assessment": aggregate_result,
+        "baseline_assessment": baseline,
+        "validation_windows": window_results,
+        "published_at": _utc_now_iso(),
+    }
+
+
+def normalize_hypothesis_slug(hypothesis: str) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "-", hypothesis.lower()).strip("-")
+    return (slug or "no-hypothesis")[:80].rstrip("-") or "no-hypothesis"
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def build_insight_payload(
+    *,
+    experiment_id: str,
+    file_path: str,
+    kept: bool,
+    reason: str,
+    aggregate_result: dict,
+    baseline: dict,
+) -> dict:
+    body = (
+        f"Experiment on `{file_path}` ended with `{aggregate_result.get('tier')}` and `{reason}`. "
+        f"Baseline was {summarize_assessment(baseline)}. "
+        f"Result was {summarize_assessment(aggregate_result)}. "
+        f"{'The keeper improved the shared mission rank tuple and is a valid research promotion.' if kept else 'This result should not replace the current research best.'}"
+    )
+    return {
+        "experiment_id": experiment_id,
+        "slug": f"{normalize_hypothesis_slug(file_path)}-{reason}",
+        "title": f"{'keeper' if kept else 'non-keeper'} {reason}",
+        "target_file": file_path,
+        "keeper": kept,
+        "tier": aggregate_result.get("tier"),
+        "body": body,
+    }
+
+
+def build_hypothesis_payload(
+    *,
+    experiment_id: str,
+    file_path: str,
+    kept: bool,
+    reason: str,
+    aggregate_result: dict,
+    baseline: dict,
+) -> dict:
+    next_step = (
+        "Push the same direction one step further while preserving the mission rank tuple."
+        if kept
+        else "Avoid repeating this exact change and target the next weakest mission metric instead."
+    )
+    focus = "migration_win_rate" if float(aggregate_result.get("migration_win_rate", 0)) < float(baseline.get("migration_win_rate", 0)) else "no_pump_bail_pct"
+    return {
+        "experiment_id": experiment_id,
+        "slug": f"{normalize_hypothesis_slug(file_path)}-{focus}",
+        "target_file": file_path,
+        "keeper": kept,
+        "priority": 3 if kept else 2,
+        "reason": reason,
+        "focus_metric": focus,
+        "hypothesis": next_step,
+        "baseline_rank_key": baseline.get("rank_key", []),
+        "result_rank_key": aggregate_result.get("rank_key", []),
+        "published_at": _utc_now_iso(),
+    }
+
+
 def main() -> int:
+    global swarm
+
     if not OPENAI_API_KEY:
         log.error("OPENAI_API_KEY is required for autoresearch.")
+        return 1
+
+    swarm = GitHubSwarmCoordinator(
+        darwin_dir=DARWIN_DIR,
+        tunable_files=TUNABLE_FILES,
+        logger=lambda message: log.info("  [swarm] %s", message),
+        runner=lambda cmd, cwd=None: run(cmd, env=None) if cwd is None else subprocess.run(
+            cmd,
+            shell=True,
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+        ),
+    )
+    if SWARM_ENABLED and not swarm.validate_or_warn():
         return 1
 
     history = load_history()
@@ -553,9 +698,25 @@ def main() -> int:
     log.info("Minimum trades per window: %s", MIN_TRADES)
     log.info("Validation windows per keeper: %s", VALIDATION_WINDOWS)
     log.info("Tunable files: %s", ", ".join(TUNABLE_FILES))
+    if SWARM_ENABLED:
+        log.info("Swarm mode: enabled")
+        log.info("Swarm runner: %s", os.getenv("AUTORESEARCH_RUNNER_ID", "").strip() or "<missing>")
+        log.info("Coord branch: %s", os.getenv("AUTORESEARCH_COORD_BRANCH", "swarm/state"))
+        log.info("Research branch: %s", os.getenv("AUTORESEARCH_RESEARCH_BRANCH", "research/current"))
     if MIRROR_DIR:
         log.info("Mirror worktree: %s%s", MIRROR_DIR, " (auto-push)" if PUSH_AFTER_KEEP else "")
     log.info("=" * 60)
+
+    if SWARM_ENABLED:
+        swarm.flush_pending()
+        adopted = swarm.adopt_best_if_ahead()
+        if adopted:
+            changed_files = adopted.get("changed_files", [])
+            log.info(
+                "  [swarm] Adopted research best %s (%s files)",
+                adopted.get("branch_commit"),
+                len(changed_files),
+            )
 
     if not rebuild():
         return 1
@@ -568,7 +729,20 @@ def main() -> int:
     log.info("  BASELINE: %s", summarize_assessment(baseline))
 
     for experiment_num in range(1, MAX_EXPERIMENTS + 1):
+        if SWARM_ENABLED and (experiment_num - 1) % swarm.sync_every_experiments == 0:
+            swarm.flush_pending()
+            adopted = swarm.adopt_best_if_ahead()
+            if adopted:
+                log.info("  [swarm] Synced newer research best; refreshing baseline.")
+                if not rebuild():
+                    return 1
+                if not restart_target_app():
+                    return 1
+                baseline_window = collect_window_metrics("BASELINE")
+                baseline = baseline_window["assessment"]
+
         file_path = pick_file(experiment_num, baseline)
+        experiment_baseline = json.loads(json.dumps(baseline))
         label = f"exp{experiment_num:03d}"
 
         if file_is_dirty(file_path):
@@ -580,7 +754,7 @@ def main() -> int:
 
         log.info("%s", "\n" + "=" * 60)
         log.info("EXPERIMENT %s — modifying %s", experiment_num, file_path)
-        log.info("Current baseline: %s", summarize_assessment(baseline))
+        log.info("Current baseline: %s", summarize_assessment(experiment_baseline))
         log.info("%s", "=" * 60)
 
         try:
@@ -596,6 +770,19 @@ def main() -> int:
         new_code = extract_code(raw)
         log.info("  Hypothesis: %s", hypothesis[:240])
 
+        claim: ClaimRecord | None = None
+        if SWARM_ENABLED:
+            claim = swarm.claim(file_path, hypothesis or f"{label}-{file_path}")
+            if claim is None:
+                history.append({
+                    "exp": experiment_num,
+                    "file": file_path,
+                    "hypothesis": hypothesis[:240],
+                    "result": "claim_denied",
+                })
+                save_history(history)
+                continue
+
         write_file(file_path, new_code)
         build_result = run("npm run build")
         if build_result.returncode != 0:
@@ -606,6 +793,38 @@ def main() -> int:
                 fix_raw = ask_openai(build_fix_prompt(errors, error_context, hypothesis, file_path))
                 write_file(file_path, extract_code(fix_raw))
                 if run("npm run build").returncode != 0:
+                    aggregate_result = failure_assessment("build_failed_x2")
+                    result_payload = build_result_payload(
+                        experiment_id=claim.experiment_id if claim else label,
+                        file_path=file_path,
+                        hypothesis=hypothesis,
+                        baseline=experiment_baseline,
+                        aggregate_result=aggregate_result,
+                        window_results=[],
+                        kept=False,
+                        reason="build_failed_x2",
+                        commit_sha=swarm._current_commit(DARWIN_DIR) if swarm else "unknown",
+                        branch=swarm._current_branch(DARWIN_DIR) if swarm else "unknown",
+                    )
+                    if SWARM_ENABLED:
+                        swarm.publish_result(result_payload)
+                        swarm.publish_insight(build_insight_payload(
+                            experiment_id=result_payload["experiment_id"],
+                            file_path=file_path,
+                            kept=False,
+                            reason="build_failed_x2",
+                            aggregate_result=aggregate_result,
+                            baseline=baseline,
+                        ))
+                        swarm.publish_hypothesis(build_hypothesis_payload(
+                            experiment_id=result_payload["experiment_id"],
+                            file_path=file_path,
+                            kept=False,
+                            reason="build_failed_x2",
+                            aggregate_result=aggregate_result,
+                            baseline=baseline,
+                        ))
+                        swarm.release_claim(claim, "build_failed_x2")
                     history.append({
                         "exp": experiment_num,
                         "file": file_path,
@@ -618,6 +837,38 @@ def main() -> int:
                     continue
             except Exception as exc:
                 log.error("  Self-correction failed: %s", exc)
+                aggregate_result = failure_assessment("build_failed")
+                result_payload = build_result_payload(
+                    experiment_id=claim.experiment_id if claim else label,
+                    file_path=file_path,
+                    hypothesis=hypothesis,
+                    baseline=experiment_baseline,
+                    aggregate_result=aggregate_result,
+                    window_results=[],
+                    kept=False,
+                    reason="build_failed",
+                    commit_sha=swarm._current_commit(DARWIN_DIR) if swarm else "unknown",
+                    branch=swarm._current_branch(DARWIN_DIR) if swarm else "unknown",
+                )
+                if SWARM_ENABLED:
+                    swarm.publish_result(result_payload)
+                    swarm.publish_insight(build_insight_payload(
+                        experiment_id=result_payload["experiment_id"],
+                        file_path=file_path,
+                        kept=False,
+                        reason="build_failed",
+                        aggregate_result=aggregate_result,
+                        baseline=baseline,
+                    ))
+                    swarm.publish_hypothesis(build_hypothesis_payload(
+                        experiment_id=result_payload["experiment_id"],
+                        file_path=file_path,
+                        kept=False,
+                        reason="build_failed",
+                        aggregate_result=aggregate_result,
+                        baseline=baseline,
+                    ))
+                    swarm.release_claim(claim, "build_failed")
                 history.append({
                     "exp": experiment_num,
                     "file": file_path,
@@ -631,6 +882,38 @@ def main() -> int:
 
         if not restart_target_app():
             log.error("  Target app failed health check after applying %s. Reverting.", file_path)
+            aggregate_result = failure_assessment("health_failed")
+            result_payload = build_result_payload(
+                experiment_id=claim.experiment_id if claim else label,
+                file_path=file_path,
+                hypothesis=hypothesis,
+                baseline=experiment_baseline,
+                aggregate_result=aggregate_result,
+                window_results=[],
+                kept=False,
+                reason="health_failed",
+                commit_sha=swarm._current_commit(DARWIN_DIR) if swarm else "unknown",
+                branch=swarm._current_branch(DARWIN_DIR) if swarm else "unknown",
+            )
+            if SWARM_ENABLED:
+                swarm.publish_result(result_payload)
+                swarm.publish_insight(build_insight_payload(
+                    experiment_id=result_payload["experiment_id"],
+                    file_path=file_path,
+                    kept=False,
+                    reason="health_failed",
+                    aggregate_result=aggregate_result,
+                    baseline=baseline,
+                ))
+                swarm.publish_hypothesis(build_hypothesis_payload(
+                    experiment_id=result_payload["experiment_id"],
+                    file_path=file_path,
+                    kept=False,
+                    reason="health_failed",
+                    aggregate_result=aggregate_result,
+                    baseline=baseline,
+                ))
+                swarm.release_claim(claim, "health_failed")
             history.append({
                 "exp": experiment_num,
                 "file": file_path,
@@ -647,11 +930,11 @@ def main() -> int:
         candidate_start_ms: int | None = None
 
         for window_num in range(1, VALIDATION_WINDOWS + 1):
-            collected = collect_window_metrics(f"WINDOW {window_num}")
+            collected = collect_window_metrics(f"WINDOW {window_num}", claim)
             window_assessment = collected["assessment"]
             window_results.append(window_assessment)
             candidate_start_ms = candidate_start_ms or collected["since_ts_ms"]
-            aggregate_result = eval_window(candidate_start_ms)
+            aggregate_result = eval_window(candidate_start_ms, claim)
             log.info("  Aggregate after window %s: %s", window_num, summarize_assessment(aggregate_result))
             if window_assessment.get("tier") == "hard_fail":
                 log.info("  Window %s hard-failed; stopping validation early.", window_num)
@@ -670,7 +953,7 @@ def main() -> int:
         improved, reason = candidate_passes(baseline, aggregate_result, window_results)
         log.info(
             "  Aggregate verdict: %s -> %s (%s)",
-            summarize_assessment(baseline),
+            summarize_assessment(experiment_baseline),
             summarize_assessment(aggregate_result),
             reason,
         )
@@ -684,11 +967,57 @@ def main() -> int:
                 f"{hypothesis[:70]}"
             )
             git_commit(file_path, commit_message)
-            if not mirror_kept_change(file_path, commit_message):
+            if SWARM_ENABLED:
+                result_commit = swarm._current_commit(DARWIN_DIR)
+                best_payload = {
+                    "experiment_id": claim.experiment_id if claim else label,
+                    "runner_id": os.getenv("AUTORESEARCH_RUNNER_ID", "").strip() or "unknown",
+                    "target_file": file_path,
+                    "hypothesis_slug": normalize_hypothesis_slug(hypothesis),
+                    "commit_sha": result_commit,
+                    "branch": os.getenv("AUTORESEARCH_RESEARCH_BRANCH", "research/current"),
+                    "assessment": aggregate_result,
+                }
+                promoted_commit = swarm.promote_keeper(file_path, commit_message, best_payload)
+                if promoted_commit:
+                    baseline["branch_commit"] = promoted_commit
+            elif not mirror_kept_change(file_path, commit_message):
                 log.warning("  Keeper mirrored locally but not to mirror worktree.")
         else:
             if not revert_file(file_path, current_code):
                 return 1
+
+        result_payload = build_result_payload(
+            experiment_id=claim.experiment_id if claim else label,
+            file_path=file_path,
+            hypothesis=hypothesis,
+            baseline=experiment_baseline,
+            aggregate_result=aggregate_result,
+            window_results=window_results,
+            kept=improved,
+            reason=reason,
+            commit_sha=swarm._current_commit(DARWIN_DIR) if swarm else "unknown",
+            branch=swarm._current_branch(DARWIN_DIR) if swarm else "unknown",
+        )
+        if SWARM_ENABLED:
+            swarm.publish_result(result_payload)
+            swarm.publish_insight(build_insight_payload(
+                experiment_id=result_payload["experiment_id"],
+                file_path=file_path,
+                kept=improved,
+                reason=reason,
+                aggregate_result=aggregate_result,
+                baseline=experiment_baseline,
+            ))
+            swarm.publish_hypothesis(build_hypothesis_payload(
+                experiment_id=result_payload["experiment_id"],
+                file_path=file_path,
+                kept=improved,
+                reason=reason,
+                aggregate_result=aggregate_result,
+                baseline=experiment_baseline,
+            ))
+            swarm.release_claim(claim, "keeper" if improved else "discard")
 
         history.append({
             "exp": experiment_num,

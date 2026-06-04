@@ -5,16 +5,25 @@
 import { Connection } from '@solana/web3.js'
 import { MarketFeed } from './market/MarketFeed'
 import { PopulationManager } from './population/PopulationManager'
+import { Strategy } from './population/Strategy'
 import { PaperExecutor } from './execution/PaperExecutor'
 import { LiveExecutor } from './execution/LiveExecutor'
 import { BankrollManager } from './execution/BankrollManager'
 import { Logger } from './observatory/Logger'
 import { PoolPriceService } from './market/PoolPriceService'
 import { createRandom } from './genome/GenomeFactory'
-import { MarketSignal, PricePoint, Genome, SignalSkipEvent } from './types'
+import { MarketSignal, PricePoint, Genome, SignalSkipEvent, FitnessScore } from './types'
 import { getPrimaryRpcUrl, resolveRuntimeConfig, RuntimeConfig } from './config/runtime'
 import { resolveGenerationCadence } from './config/mission'
 import { compareAssessments } from './evolution/MissionAssessment'
+import {
+  getLiveAttemptCooldownRemainingMs,
+  getLiveSignalWindow,
+  isAssessmentQualifiedForLive,
+  isLiveEntryCapReached,
+  LiveExecutionConfig,
+  resolveLiveExecutionConfig,
+} from './config/liveExecution'
 import { createSolanaConnection } from './rpc/solanaConnection'
 
 const STATUS_INTERVAL_MS = 30 * 1000
@@ -32,6 +41,20 @@ const MIGRATION_MIN_LIQUIDITY_SOL = parseFloat(process.env.MIGRATION_MIN_LIQUIDI
 const TARGET_ENTRY_POOL_PCT = parseFloat(process.env.DARWIN_TARGET_ENTRY_POOL_PCT || '0.03')
 const MIN_MEANINGFUL_FILL_RATIO = parseFloat(process.env.DARWIN_MIN_MEANINGFUL_FILL_RATIO || '0.5')
 
+interface LiveSignalCandidate {
+  strategy: Strategy
+  assessment: FitnessScore
+  sizing: ReturnType<BankrollManager['getSizingPlan']>
+  sizeSol: number
+  fillRatio: number
+  qualifiedFromHistory: boolean
+}
+
+interface ResolvedEntryPrice {
+  entryPrice: number
+  priceSource: string
+}
+
 export class Orchestrator {
   private runtime: RuntimeConfig
   private feed: MarketFeed
@@ -39,6 +62,7 @@ export class Orchestrator {
   private paperExecutor: PaperExecutor
   private liveExecutor: LiveExecutor | null = null
   private liveMode: boolean
+  private liveExecutionConfig: LiveExecutionConfig = resolveLiveExecutionConfig(process.env)
   private bankroll: BankrollManager
   private logger: Logger
   private poolPriceService: PoolPriceService | null = null
@@ -55,6 +79,9 @@ export class Orchestrator {
   private signalDistLog: { migration: number; amm: number; whale: number; other: number } = { migration: 0, amm: 0, whale: 0, other: 0 }
   private signalTradedLog: { migration: number; amm: number; whale: number; other: number } = { migration: 0, amm: 0, whale: 0, other: 0 }
   private lastSignalDistLog = Date.now()
+  private recentLiveAttemptAt: Map<string, number> = new Map()
+  private liveEntriesOpened = 0
+  private liveAutoStopScheduled = false
 
   constructor() {
     this.runtime = resolveRuntimeConfig(process.env)
@@ -96,6 +123,28 @@ export class Orchestrator {
     }
     if (this.liveMode) {
       console.log('[Darwin] Live trade size: ' + parseFloat(process.env.LIVE_TRADE_SIZE_SOL || '0.001').toFixed(4) + ' SOL')
+      console.log(
+        '[Darwin] Live policy: min tier ' +
+        this.liveExecutionConfig.minQualifiedTier.toUpperCase() +
+        ' | min trades ' +
+        this.liveExecutionConfig.minAssessmentTrades +
+        ' | signals ' +
+        this.liveExecutionConfig.allowedSignalTypes.join(',') +
+        ' | mint cooldown ' +
+        Math.round(this.liveExecutionConfig.mintAttemptCooldownMs / 1000) +
+        's' +
+        ' | max new entries ' +
+        this.liveExecutionConfig.maxNewEntries
+      )
+      console.log(
+        '[Darwin] Live timing: migration ready ' +
+        this.liveExecutionConfig.migrationReadyDelayMs +
+        'ms | migration max age ' +
+        this.liveExecutionConfig.migrationMaxAgeMs +
+        'ms | generic max age ' +
+        this.liveExecutionConfig.signalMaxAgeMs +
+        'ms'
+      )
     }
 
     const rpcUrl = getPrimaryRpcUrl(process.env)
@@ -143,7 +192,7 @@ export class Orchestrator {
       if (this.population.size() >= popSize) break
       // Bump generation count so we know this genome survived a restart
       genome.generation = (genome.generation || 0) + 1
-      this.population.spawn(genome, true)
+      this.population.spawn(genome, true, true)
       seededFromDB++
     }
 
@@ -188,38 +237,32 @@ export class Orchestrator {
       return
     }
 
+    if (this.liveMode) {
+      if (!this.liveExecutionConfig.allowedSignalTypes.includes(signal.type)) {
+        this.logSignalSkip(signal, 'live_signal_type_disabled', {
+          signalType: signal.type,
+          allowedSignalTypes: this.liveExecutionConfig.allowedSignalTypes,
+        })
+        return
+      }
+
+      const liveSignalWindow = getLiveSignalWindow(signal, this.liveExecutionConfig)
+      if (liveSignalWindow.status === 'stale') {
+        this.logSignalSkip(signal, 'live_signal_stale', {
+          ageMs: liveSignalWindow.ageMs,
+          maxAgeMs: liveSignalWindow.maxAgeMs,
+          signalType: signal.type,
+        })
+        return
+      }
+    }
+
     // Fetch real price BEFORE evaluating strategies — skip if we can't get one
     // Priority: 1) pool reserves (direct on-chain) 2) migration estimate 3) Jupiter
-    let entryPrice = signal.priceSol > 0 ? signal.priceSol : 0
-    let priceSource = entryPrice > 0 ? 'signal' : 'none'
-
-    if (entryPrice === 0 && this.poolPriceService) {
-      // Try direct pool reserve read first (works for brand new tokens)
-      if (signal.pool && signal.pool.length > 10) {
-        try {
-          const poolPrice = await this.poolPriceService.getPriceFromPool(signal.pool)
-          if (poolPrice !== null && poolPrice > 0) {
-            entryPrice = poolPrice
-            priceSource = 'pool_reserves'
-          }
-        } catch (_) { }
-      }
-
-      // For migration signals without a valid pool price: use reserve estimate
-      if (entryPrice === 0 && signal.type === 'migration' && signal.liquiditySol > 0) {
-        entryPrice = this.poolPriceService.estimateMigrationPrice(signal.liquiditySol)
-        priceSource = 'migration_estimate'
-      }
-    }
-
-    // Jupiter as final fallback (works once token is indexed, ~30-60s after launch)
-    if (entryPrice === 0) {
-      const fetched = await this.fetchJupiterPriceSOL(signal.mint)
-      if (fetched !== null && fetched > 0) {
-        entryPrice = fetched
-        priceSource = 'jupiter'
-      }
-    }
+    const resolvedEntryPrice = this.liveMode
+      ? await this.resolveLiveEntryPrice(signal)
+      : await this.resolvePaperEntryPrice(signal)
+    const { entryPrice, priceSource } = resolvedEntryPrice
 
     if (entryPrice > 0) {
       this.feed.addPricePoint(signal.mint, entryPrice)
@@ -240,6 +283,11 @@ export class Orchestrator {
     const allOpen = this.liveMode && this.liveExecutor ? this.liveExecutor.getOpenPositions() : this.paperExecutor.getOpenPositions()
     const committedCapital = allOpen.reduce((sum, p) => sum + p.sizeSol, 0)
     let availableCapital = Math.max(0, this.bankroll.getCurrentBalance() - committedCapital)
+
+    if (this.liveMode && this.liveExecutor) {
+      await this.handleLiveSignal(signal, entryPrice, priceSource, strategies, availableCapital)
+      return
+    }
 
     for (const strategy of strategies) {
       try {
@@ -298,12 +346,6 @@ export class Orchestrator {
             continue
           }
 
-          // Track signal traded
-          if (signal.type === 'migration') this.signalTradedLog.migration++
-          else if (signal.type === 'amm_activity') this.signalTradedLog.amm++
-          else if (signal.type === 'whale_buy') this.signalTradedLog.whale++
-          else this.signalTradedLog.other++
-
           const pos = this.liveMode && this.liveExecutor
             ? await this.liveExecutor.open(signal, strategy.genome, strategy.id, sizeSol, entryPrice)
             : this.paperExecutor.open(signal, strategy.genome, strategy.id, sizeSol, entryPrice)
@@ -313,6 +355,7 @@ export class Orchestrator {
             continue
           }
 
+          this.recordSignalTraded(signal)
           pos.poolLiqSol = signal.liquiditySol
           pos.desiredSizeSol = sizing.desiredSizeSol
           pos.cappedSizeSol = sizing.cappedSizeSol
@@ -337,6 +380,251 @@ export class Orchestrator {
     }
   }
 
+  private async resolvePaperEntryPrice(signal: MarketSignal): Promise<ResolvedEntryPrice> {
+    let entryPrice = signal.priceSol > 0 ? signal.priceSol : 0
+    let priceSource = entryPrice > 0 ? 'signal' : 'none'
+
+    if (entryPrice === 0 && this.poolPriceService) {
+      if (signal.pool && signal.pool.length > 10) {
+        try {
+          const poolPrice = await this.poolPriceService.getPriceFromPool(signal.pool)
+          if (poolPrice !== null && poolPrice > 0) {
+            entryPrice = poolPrice
+            priceSource = 'pool_reserves'
+          }
+        } catch (_) {}
+      }
+
+      if (entryPrice === 0 && signal.type === 'migration' && signal.liquiditySol > 0) {
+        entryPrice = this.poolPriceService.estimateMigrationPrice(signal.liquiditySol)
+        priceSource = 'migration_estimate'
+      }
+    }
+
+    if (entryPrice === 0) {
+      const fetched = await this.fetchJupiterPriceSOL(signal.mint)
+      if (fetched !== null && fetched > 0) {
+        entryPrice = fetched
+        priceSource = 'jupiter'
+      }
+    }
+
+    return { entryPrice, priceSource }
+  }
+
+  private async resolveLiveEntryPrice(signal: MarketSignal): Promise<ResolvedEntryPrice> {
+    if (signal.priceSol > 0) {
+      return { entryPrice: signal.priceSol, priceSource: 'signal' }
+    }
+
+    const history = this.feed.getPriceHistory(signal.mint)
+    if (history.length > 0) {
+      return {
+        entryPrice: history[history.length - 1].price,
+        priceSource: 'cached',
+      }
+    }
+
+    if (this.poolPriceService && signal.type === 'migration' && signal.liquiditySol > 0) {
+      return {
+        entryPrice: this.poolPriceService.estimateMigrationPrice(signal.liquiditySol),
+        priceSource: 'migration_estimate',
+      }
+    }
+
+    return { entryPrice: 0, priceSource: 'none' }
+  }
+
+  private async handleLiveSignal(
+    signal: MarketSignal,
+    entryPrice: number,
+    priceSource: string,
+    strategies: Strategy[],
+    availableCapital: number
+  ): Promise<void> {
+    if (!this.liveExecutor) return
+
+    if (isLiveEntryCapReached(this.liveEntriesOpened, this.liveExecutionConfig)) {
+      this.logSignalSkip(signal, 'live_entry_cap_reached', {
+        maxNewEntries: this.liveExecutionConfig.maxNewEntries,
+        openedEntries: this.liveEntriesOpened,
+      })
+      return
+    }
+
+    const cooldownRemainingMs = this.getLiveMintCooldownRemainingMs(signal.mint)
+    if (cooldownRemainingMs > 0) {
+      this.logSignalSkip(signal, 'live_mint_attempt_cooldown', {
+        cooldownRemainingMs,
+        signalType: signal.type,
+      })
+      return
+    }
+
+    if (availableCapital < 0.01) {
+      this.logSignalSkip(signal, 'insufficient_available_capital', {
+        availableCapital,
+        mode: 'live',
+      })
+      return
+    }
+
+    if (this.bankroll.isDrawdownBreached()) {
+      this.logSignalSkip(signal, 'live_drawdown_pause', {
+        drawdownPct: this.bankroll.getDrawdownPct(),
+      })
+      return
+    }
+
+    let bestCandidate: LiveSignalCandidate | null = null
+    let firedStrategies = 0
+    let assessmentQualifiedStrategies = 0
+    let historicalQualifiedStrategies = 0
+    let sizableQualifiedStrategies = 0
+
+    for (const strategy of strategies) {
+      try {
+        const openCount = this.liveExecutor.getOpenPositionCount(strategy.id)
+        if (openCount >= strategy.genome.risk.maxConcurrent) continue
+
+        const priceHistory = this.feed.getPriceHistory(signal.mint)
+        if (!strategy.evaluateSignal(signal, priceHistory)) continue
+        firedStrategies++
+
+        const assessment = strategy.getAssessment()
+        const assessmentQualified = isAssessmentQualifiedForLive(assessment, this.liveExecutionConfig)
+        const qualifiedFromHistory =
+          strategy.wasSeededFromMemory() &&
+          assessment.tradeCount < this.liveExecutionConfig.minAssessmentTrades
+
+        if (assessmentQualified) assessmentQualifiedStrategies++
+        if (qualifiedFromHistory) historicalQualifiedStrategies++
+        if (!assessmentQualified && !qualifiedFromHistory) continue
+
+        const sizing = this.bankroll.getSizingPlan(
+          strategy.genome.risk.capitalPct,
+          signal.liquiditySol,
+          strategy.genome.risk.maxPoolPct,
+          signal.type
+        )
+        const dynamicLiquidityFloor = this.getDynamicLiquidityFloor(signal.type, sizing.desiredSizeSol)
+        if (signal.liquiditySol > 0 && signal.liquiditySol < dynamicLiquidityFloor) {
+          continue
+        }
+
+        const sizeSol = Math.min(sizing.sizeSol, availableCapital * 0.95)
+        const fillRatio = sizing.desiredSizeSol > 0 ? sizeSol / sizing.desiredSizeSol : 0
+        if (sizeSol <= 0 || fillRatio < MIN_MEANINGFUL_FILL_RATIO || sizeSol < 0.00001) {
+          continue
+        }
+
+        sizableQualifiedStrategies++
+
+        const candidate: LiveSignalCandidate = {
+          strategy,
+          assessment,
+          sizing,
+          sizeSol,
+          fillRatio,
+          qualifiedFromHistory,
+        }
+
+        if (!bestCandidate || this.isBetterLiveCandidate(candidate, bestCandidate)) {
+          bestCandidate = candidate
+        }
+      } catch (e) {
+        console.error('[Darwin] Live strategy evaluation error:', e)
+      }
+    }
+
+    if (!bestCandidate) {
+      if (firedStrategies > 0) {
+        this.logSignalSkip(
+          signal,
+          sizableQualifiedStrategies === 0 ? 'no_live_qualified_candidate' : 'no_live_candidate_selected',
+          {
+            firedStrategies,
+            assessmentQualifiedStrategies,
+            historicalQualifiedStrategies,
+            sizableQualifiedStrategies,
+            minQualifiedTier: this.liveExecutionConfig.minQualifiedTier,
+            minAssessmentTrades: this.liveExecutionConfig.minAssessmentTrades,
+          }
+        )
+      }
+      return
+    }
+
+    const liveSignalWindow = getLiveSignalWindow(signal, this.liveExecutionConfig)
+    if (liveSignalWindow.status === 'stale') {
+      this.logSignalSkip(signal, 'live_signal_stale', {
+        ageMs: liveSignalWindow.ageMs,
+        maxAgeMs: liveSignalWindow.maxAgeMs,
+        signalType: signal.type,
+      })
+      return
+    }
+
+    this.recentLiveAttemptAt.set(signal.mint, Date.now())
+    const pos = await this.liveExecutor.open(
+      signal,
+      bestCandidate.strategy.genome,
+      bestCandidate.strategy.id,
+      bestCandidate.sizeSol,
+      entryPrice
+    )
+
+    if (!pos) {
+      const failureReason = this.liveExecutor.consumeLastOpenFailureReason()
+      if (failureReason) {
+        this.logSignalSkip(signal, failureReason, {
+          strategyId: bestCandidate.strategy.id,
+          signalType: signal.type,
+        })
+      }
+      console.log(
+        '[Darwin] LIVE TX FAILED: ' +
+        bestCandidate.strategy.id.slice(-8) +
+        ' | ' +
+        signal.mint.slice(0, 8) +
+        '...'
+      )
+      return
+    }
+
+    this.recordSignalTraded(signal)
+    pos.poolLiqSol = signal.liquiditySol
+    pos.desiredSizeSol = bestCandidate.sizing.desiredSizeSol
+    pos.cappedSizeSol = bestCandidate.sizing.cappedSizeSol
+    pos.poolCapSol = bestCandidate.sizing.poolCapSol
+    pos.fillRatio = bestCandidate.fillRatio
+    bestCandidate.strategy.recordEntry()
+    this.liveEntriesOpened++
+
+    console.log(
+      '[Darwin] LIVE ENTRY: ' +
+      bestCandidate.strategy.id.slice(-8) + ' | ' +
+      signal.mint.slice(0, 8) + '... | ' +
+      signal.type + ' | ' +
+      bestCandidate.sizeSol.toFixed(4) + ' SOL @ ' +
+      entryPrice.toFixed(8) + ' [' + priceSource + ']' +
+      ' | tier=' + bestCandidate.assessment.tier.toUpperCase() +
+      ' | trades=' + bestCandidate.assessment.tradeCount +
+      (bestCandidate.qualifiedFromHistory ? ' | historical-bootstrap' : '')
+    )
+
+    if (
+      this.liveExecutionConfig.autoStopAfterEntry &&
+      isLiveEntryCapReached(this.liveEntriesOpened, this.liveExecutionConfig)
+    ) {
+      this.scheduleLiveAutoStop(
+        pos.entrySignature || 'unknown',
+        bestCandidate.strategy.id,
+        signal.mint
+      )
+    }
+  }
+
   private getSignalLiquidityFloor(signalType: MarketSignal['type']): number {
     if (signalType === 'migration') return MIGRATION_MIN_LIQUIDITY_SOL
     if (signalType === 'new_pool') return NEW_POOL_MIN_LIQUIDITY_SOL
@@ -352,6 +640,45 @@ export class Orchestrator {
     // without Darwin becoming an outsized share of the liquidity.
     const dynamicFloor = desiredSizeSol / TARGET_ENTRY_POOL_PCT
     return Math.max(hardFloor, dynamicFloor)
+  }
+
+  private isBetterLiveCandidate(candidate: LiveSignalCandidate, incumbent: LiveSignalCandidate): boolean {
+    const assessmentCompare = compareAssessments(candidate.assessment, incumbent.assessment)
+    if (assessmentCompare !== 0) {
+      return assessmentCompare < 0
+    }
+
+    if (candidate.fillRatio !== incumbent.fillRatio) {
+      return candidate.fillRatio > incumbent.fillRatio
+    }
+
+    if (candidate.sizeSol !== incumbent.sizeSol) {
+      return candidate.sizeSol > incumbent.sizeSol
+    }
+
+    return false
+  }
+
+  private getLiveMintCooldownRemainingMs(mint: string): number {
+    const now = Date.now()
+    for (const [trackedMint, lastAttemptAt] of this.recentLiveAttemptAt) {
+      if (getLiveAttemptCooldownRemainingMs(lastAttemptAt, this.liveExecutionConfig, now) === 0) {
+        this.recentLiveAttemptAt.delete(trackedMint)
+      }
+    }
+
+    return getLiveAttemptCooldownRemainingMs(
+      this.recentLiveAttemptAt.get(mint),
+      this.liveExecutionConfig,
+      now
+    )
+  }
+
+  private recordSignalTraded(signal: MarketSignal): void {
+    if (signal.type === 'migration') this.signalTradedLog.migration++
+    else if (signal.type === 'amm_activity') this.signalTradedLog.amm++
+    else if (signal.type === 'whale_buy') this.signalTradedLog.whale++
+    else this.signalTradedLog.other++
   }
 
   private tickPositions(): void {
@@ -561,5 +888,47 @@ export class Orchestrator {
 
   private logSignalSkip(signal: MarketSignal, reason: string, details: Record<string, any> = {}): void {
     this.logger.logSignalSkip(signal, reason, details)
+  }
+
+  private scheduleLiveAutoStop(signature: string, strategyId: string, mint: string): void {
+    if (this.liveAutoStopScheduled) return
+    this.liveAutoStopScheduled = true
+
+    console.log(
+      '[Darwin] Live canary confirmed. Auto-stopping after first entry.' +
+      ' | signature: ' + signature +
+      ' | strategy: ' + strategyId.slice(-8) +
+      ' | mint: ' + mint.slice(0, 8)
+    )
+
+    setTimeout(() => {
+      void this.stopAfterCanary(signature, strategyId, mint)
+    }, 250)
+  }
+
+  private async stopAfterCanary(signature: string, strategyId: string, mint: string): Promise<void> {
+    try {
+      if (this.tickHandle) {
+        clearInterval(this.tickHandle)
+        this.tickHandle = null
+      }
+      if (this.statusHandle) {
+        clearInterval(this.statusHandle)
+        this.statusHandle = null
+      }
+      if (this.pricePollHandle) {
+        clearInterval(this.pricePollHandle)
+        this.pricePollHandle = null
+      }
+      this.feed.stop()
+      console.log(
+        '[Darwin] Live canary stop complete.' +
+        ' | signature: ' + signature +
+        ' | strategy: ' + strategyId.slice(-8) +
+        ' | mint: ' + mint
+      )
+    } finally {
+      setTimeout(() => process.exit(0), 150)
+    }
   }
 }

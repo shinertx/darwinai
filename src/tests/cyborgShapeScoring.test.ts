@@ -1,0 +1,70 @@
+import test from 'node:test'
+import assert from 'node:assert/strict'
+import {
+  resolveCyborgShapeScoringConfig,
+  scoreCyborgShape,
+} from '../observatory/cyborgShapeScoring'
+
+test('strict-zero rent-safe shape scores as a high-quality candidate', () => {
+  const config = resolveCyborgShapeScoringConfig({})
+  const score = scoreCyborgShape({
+    buyCompetitorWalletCount5s: 0,
+    interactingWalletCount5s: 0,
+    liquiditySol: 48,
+    uniqueCreatorInRun: true,
+  }, config)
+
+  assert.equal(score.profile, 'strict_zero')
+  assert.equal(score.qualified, true)
+  assert.equal(score.blockers.length, 0)
+  assert.equal(score.estimatedLaterBuyFlowRate, 0.985)
+  assert.equal(score.estimatedThreePlusLaterBuyWalletRate, 0.901)
+  assert.ok(score.score >= config.minScore)
+})
+
+test('low-competition shapes can still qualify when interactions stay low', () => {
+  const config = resolveCyborgShapeScoringConfig({})
+  const score = scoreCyborgShape({
+    buyCompetitorWalletCount5s: 1,
+    interactingWalletCount5s: 2,
+    liquiditySol: 60,
+    uniqueCreatorInRun: true,
+  }, config)
+
+  assert.equal(score.profile, 'low_competition')
+  assert.equal(score.qualified, true)
+  assert.equal(score.blockers.length, 0)
+  assert.equal(score.estimatedLaterBuyFlowRate, 0.975)
+  assert.equal(score.estimatedThreePlusLaterBuyWalletRate, 0.806)
+})
+
+test('repeat creators and noisy 5-second windows are blocked', () => {
+  const config = resolveCyborgShapeScoringConfig({})
+  const score = scoreCyborgShape({
+    buyCompetitorWalletCount5s: 1,
+    interactingWalletCount5s: 18,
+    liquiditySol: 45,
+    uniqueCreatorInRun: false,
+  }, config)
+
+  assert.equal(score.qualified, false)
+  assert.deepEqual(score.blockers, ['repeat_creator', `interactions_5s>${config.maxInteractingWallets5s}`])
+})
+
+test('liquidity floor remains configurable for tighter live admission', () => {
+  const config = resolveCyborgShapeScoringConfig({
+    PUMPSWAP_CYBORG_SCORER_MIN_LIQUIDITY_SOL: '35',
+    PUMPSWAP_CYBORG_SCORER_MAX_BUY_COMPETITORS_5S: '1',
+    PUMPSWAP_CYBORG_SCORER_MAX_INTERACTIONS_5S: '12',
+    PUMPSWAP_CYBORG_SCORER_MIN_SCORE: '70',
+  })
+  const score = scoreCyborgShape({
+    buyCompetitorWalletCount5s: 0,
+    interactingWalletCount5s: 0,
+    liquiditySol: 20,
+    uniqueCreatorInRun: true,
+  }, config)
+
+  assert.equal(score.qualified, false)
+  assert.deepEqual(score.blockers, ['liquidity_sol<35'])
+})

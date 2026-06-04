@@ -60,7 +60,7 @@ function randomExitGenome(bias: StrategyBias = 'exploration'): ExitGenome {
       trailingActivatePct: randBetween(0.10, 0.35),
       trailingDistancePct: randBetween(0.08, 0.22),
       timeStopMs: randBetween(60000, 300000),
-      noPumpBailMs: randBetween(12000, 30000),
+      noPumpBailMs: randBetween(18000, 42000),
       fadeGivebackPct: randBetween(0.15, 0.35),
       moonbagPct: Math.random() < 0.45 ? randBetween(0.12, 0.45) : 0,
     }
