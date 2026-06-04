@@ -64,6 +64,7 @@ Selection uses hard-fail gates first, then `tier_a` / `tier_b` / `tier_c`, then 
 - `darwin-paper-stable`: long-running paper organism; not mutated by autoresearch
 - `darwin-paper-research`: research sandbox; restarted and mutated by autoresearch
 - `darwin-live`: live trading app; defined but stopped by default
+- `darwin-live-canary`: one-shot live canary app; stopped by default and configured to not restart after auto-stop
 - `darwin-autoresearch`: OpenAI-driven experiment loop; targets `darwin-paper-research` only
 
 Recommended boot sequence:
@@ -85,6 +86,12 @@ Live mode stays manual:
 
 ```bash
 pm2 start ecosystem.config.cjs --only darwin-live
+```
+
+For a tiny one-entry live proof, use the one-shot canary profile instead:
+
+```bash
+pm2 start ecosystem.config.cjs --only darwin-live-canary
 ```
 
 Live mode is intentionally stricter than paper:

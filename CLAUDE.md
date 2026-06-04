@@ -13,6 +13,7 @@ Autoresearch is a separate OpenAI-driven loop that experiments only against the 
 
 - Set `DARWIN_MODE=paper` unless you are intentionally validating live trading.
 - `darwin-live` is defined in PM2 but should stay stopped unless explicitly started.
+- `darwin-live-canary` is the one-shot PM2 profile for tiny live validation; it is configured to stop after a clean canary exit instead of restarting.
 - Autoresearch must target `darwin-paper-research` only and must never restart `darwin-paper-stable` or `darwin-live`.
 - No secrets belong in source files, docs, or tracked scripts.
 
@@ -21,6 +22,7 @@ Autoresearch is a separate OpenAI-driven loop that experiments only against the 
 - `darwin-paper-stable`: primary paper-trading process for clean evaluation
 - `darwin-paper-research`: sandbox paper-trading process for autoresearch
 - `darwin-live`: live-trading process, stopped by default
+- `darwin-live-canary`: one-shot live-canary process, stopped by default
 - `darwin-autoresearch`: experiment runner, stopped by default until OpenAI env is ready
 
 Use the ecosystem file:
@@ -29,6 +31,7 @@ Use the ecosystem file:
 pm2 start ecosystem.config.cjs --only darwin-paper-stable
 pm2 start ecosystem.config.cjs --only darwin-paper-research
 pm2 start ecosystem.config.cjs --only darwin-autoresearch
+pm2 start ecosystem.config.cjs --only darwin-live-canary
 pm2 start ecosystem.config.cjs --only darwin-live
 ```
 

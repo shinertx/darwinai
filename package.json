@@ -22,6 +22,7 @@
     "pm2:start:paper:stable": "pm2 start ecosystem.config.cjs --only darwin-paper-stable",
     "pm2:start:paper:research": "pm2 start ecosystem.config.cjs --only darwin-paper-research",
     "pm2:start:live": "pm2 start ecosystem.config.cjs --only darwin-live",
+    "pm2:start:live:canary": "pm2 start ecosystem.config.cjs --only darwin-live-canary",
     "pm2:start:autoresearch": "pm2 start ecosystem.config.cjs --only darwin-autoresearch",
     "pm2:start:pumpswap:meta": "pm2 start ecosystem.config.cjs --only darwin-pumpswap-meta-observer",
     "smoke:settlement:devnet": "node scripts/ops/test_settlement_devnet.mjs"
