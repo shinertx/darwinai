@@ -3,7 +3,8 @@
 // Uses exact same byte offsets as final-radiation PumpSwapEngine
 // ============================================================================
 
-import { AccountInfo, Connection, PublicKey } from '@solana/web3.js'
+import { AccountInfo, Connection, Keypair, PublicKey } from '@solana/web3.js'
+import { OnlinePumpAmmSdk } from '@pump-fun/pump-swap-sdk'
 import { createSolanaConnection } from '../rpc/solanaConnection'
 
 const WSOL_MINT = 'So11111111111111111111111111111111111111112'
@@ -47,6 +48,22 @@ function readMintDecimals(account: AccountInfo<Buffer> | null): number | null {
   return account.data.readUInt8(MINT_DECIMALS_OFFSET)
 }
 
+function rawAmountToNumber(value: unknown): number | null {
+  if (typeof value === 'bigint') return Number(value)
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null
+  if (value && typeof (value as any).toString === 'function') {
+    const parsed = Number((value as any).toString())
+    return Number.isFinite(parsed) ? parsed : null
+  }
+  return null
+}
+
+function toBase58(value: unknown): string | null {
+  if (typeof value === 'string') return value
+  if (value && typeof (value as any).toBase58 === 'function') return (value as any).toBase58()
+  return null
+}
+
 type PoolMetadata = {
   baseVault: PublicKey
   quoteVault: PublicKey
@@ -62,9 +79,11 @@ const poolPriceInFlight = new Map<string, Promise<number | null>>()
 
 export class PoolPriceService {
   private connection: Connection
+  private pumpAmm: OnlinePumpAmmSdk
 
   constructor(rpcUrl: string) {
     this.connection = createSolanaConnection(rpcUrl, 'confirmed')
+    this.pumpAmm = new OnlinePumpAmmSdk(this.connection)
   }
 
   public async getPriceFromPool(poolAddress: string): Promise<number | null> {
@@ -75,7 +94,7 @@ export class PoolPriceService {
     if (inflight) return inflight
 
     const promise = this.getPricesFromPools([poolAddress])
-      .then((prices) => prices.get(poolAddress) ?? null)
+      .then(async (prices) => prices.get(poolAddress) ?? await this.getPriceFromSdkState(poolAddress))
       .finally(() => {
         poolPriceInFlight.delete(poolAddress)
       })
@@ -135,6 +154,14 @@ export class PoolPriceService {
       const price = solReserve / tokenReserve
       poolPriceCache.set(poolAddress, { price, ts: Date.now() })
       results.set(poolAddress, price)
+    }
+
+    for (const poolAddress of stalePools) {
+      if (results.has(poolAddress)) continue
+      const sdkPrice = await this.getPriceFromSdkState(poolAddress)
+      if (sdkPrice !== null && sdkPrice > 0) {
+        results.set(poolAddress, sdkPrice)
+      }
     }
 
     return results
@@ -227,6 +254,41 @@ export class PoolPriceService {
     }
 
     return resolved
+  }
+
+  private async getPriceFromSdkState(poolAddress: string): Promise<number | null> {
+    try {
+      const poolKey = new PublicKey(poolAddress)
+      const state = await this.pumpAmm.swapSolanaState(poolKey, Keypair.generate().publicKey)
+      const pool = (state as any)?.pool
+      const baseMint = toBase58(pool?.baseMint ?? (state as any)?.baseMint)
+      const quoteMint = toBase58(pool?.quoteMint ?? (state as any)?.quoteMint)
+      const baseRaw = rawAmountToNumber((state as any)?.poolBaseAmount)
+      const quoteRaw = rawAmountToNumber((state as any)?.poolQuoteAmount)
+      if (!baseMint || !quoteMint || baseRaw == null || quoteRaw == null) return null
+
+      const solSide = baseMint === WSOL_MINT ? 'base' : quoteMint === WSOL_MINT ? 'quote' : null
+      if (!solSide) return null
+
+      const tokenMint = solSide === 'base' ? quoteMint : baseMint
+      const tokenRaw = solSide === 'base' ? quoteRaw : baseRaw
+      const solRaw = solSide === 'base' ? baseRaw : quoteRaw
+      if (solRaw <= 0 || tokenRaw <= 0) return null
+
+      const tokenMintAccount = await this.connection.getAccountInfo(new PublicKey(tokenMint), 'confirmed')
+      const tokenDecimals = readMintDecimals(tokenMintAccount)
+      if (tokenDecimals == null) return null
+
+      const solReserve = solRaw / 1e9
+      const tokenReserve = tokenRaw / Math.pow(10, tokenDecimals)
+      if (solReserve <= 0 || tokenReserve <= 0) return null
+
+      const price = solReserve / tokenReserve
+      poolPriceCache.set(poolAddress, { price, ts: Date.now() })
+      return price
+    } catch (_) {
+      return null
+    }
   }
 
   private async fetchAccounts(pubkeys: PublicKey[]): Promise<Map<string, AccountInfo<Buffer> | null>> {
