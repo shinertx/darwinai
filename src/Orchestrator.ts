@@ -426,10 +426,21 @@ export class Orchestrator {
       }
     }
 
-    if (this.poolPriceService && signal.type === 'migration' && signal.liquiditySol > 0) {
-      return {
-        entryPrice: this.poolPriceService.estimateMigrationPrice(signal.liquiditySol),
-        priceSource: 'migration_estimate',
+    if (this.poolPriceService) {
+      if (signal.pool && signal.pool.length > 10) {
+        try {
+          const poolPrice = await this.poolPriceService.getPriceFromPool(signal.pool)
+          if (poolPrice !== null && poolPrice > 0) {
+            return { entryPrice: poolPrice, priceSource: 'pool_reserves' }
+          }
+        } catch (_) {}
+      }
+
+      if (signal.type === 'migration' && signal.liquiditySol > 0) {
+        return {
+          entryPrice: this.poolPriceService.estimateMigrationPrice(signal.liquiditySol),
+          priceSource: 'migration_estimate',
+        }
       }
     }
 
