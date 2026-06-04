@@ -10,12 +10,11 @@ import {
 } from '@solana/web3.js'
 import {
   OnlinePumpAmmSdk, PUMP_AMM_SDK,
+  OFFLINE_PUMP_AMM_PROGRAM,
   buyQuoteInput as calculateBuyQuoteInput,
-  pumpPoolAuthorityPda, poolPda, poolV2Pda, userVolumeAccumulatorPda, CANONICAL_POOL_INDEX,
+  pumpPoolAuthorityPda, poolPda, CANONICAL_POOL_INDEX,
 } from '@pump-fun/pump-swap-sdk'
 import {
-  createAssociatedTokenAccountIdempotentInstruction,
-  createCloseAccountInstruction,
   getAssociatedTokenAddressSync,
   TOKEN_2022_PROGRAM_ID,
   TOKEN_PROGRAM_ID,
@@ -120,10 +119,6 @@ export function getExecutionPoolCandidates(signal: MarketSignal): string[] {
   }
 
   return candidates
-}
-
-function accountExists(accountInfo: { owner?: PublicKey | null } | null | undefined, owner: PublicKey): boolean {
-  return Boolean(accountInfo?.owner?.equals(owner))
 }
 
 function instructionMatchesDiscriminator(
@@ -1300,20 +1295,9 @@ export class LiveExecutor {
   }
 
   private async buildQuoteExactInSellInstructions(swapState: any, exactQuoteAmount: bigint): Promise<TransactionInstruction[]> {
-    const sdk = PUMP_AMM_SDK as any
-    const swapAccounts = sdk.swapAccounts(swapState)
-    const {
-      user,
-      baseMint,
-      quoteMint,
-      userBaseTokenAccount,
-      userQuoteTokenAccount,
-      baseTokenProgram,
-      quoteTokenProgram,
-    } = swapAccounts
     const { pool, userBaseAccountInfo, userQuoteAccountInfo } = swapState
     const spendableQuoteIn = new BN(exactQuoteAmount.toString())
-    const { base } = calculateBuyQuoteInput({
+    const { base, maxQuote } = calculateBuyQuoteInput({
       quote: spendableQuoteIn,
       slippage: this.liveConfig.sellSlippagePct,
       baseReserve: swapState.poolBaseAmount,
@@ -1325,85 +1309,28 @@ export class LiveExecutor {
       creator: pool.creator,
       feeConfig: swapState.feeConfig,
     })
-    const precision = new BN(1_000_000_000)
-    const slippageFactorFloat = Math.max(0, 1 - this.liveConfig.sellSlippagePct / 100) * 1_000_000_000
-    const slippageFactor = new BN(Math.floor(slippageFactorFloat))
-    const minBaseAmountOut = base.mul(slippageFactor).div(precision)
-    const poolV2PdaKey = poolV2Pda(pool.baseMint)
 
-    return await sdk.withWsolAccount(
-      user,
-      user,
-      quoteMint,
-      userQuoteTokenAccount,
-      accountExists(userQuoteAccountInfo, quoteTokenProgram),
-      spendableQuoteIn,
-      async () => {
-        const instructions: TransactionInstruction[] = []
-
-        if (!accountExists(userBaseAccountInfo, baseTokenProgram)) {
-          instructions.push(
-            createAssociatedTokenAccountIdempotentInstruction(
-              user,
-              userBaseTokenAccount,
-              user,
-              baseMint,
-              baseTokenProgram,
-            ),
-          )
-        }
-
-        const builder = sdk.offlineProgram.methods
-          .buyExactQuoteIn(spendableQuoteIn, minBaseAmountOut, { 0: true })
-          .accounts(swapAccounts)
-
-        if (pool.isCashbackCoin) {
-          instructions.push(
-            await builder.remainingAccounts([
-              {
-                pubkey: getAssociatedTokenAddressSync(
-                  WSOL_MINT,
-                  userVolumeAccumulatorPda(user),
-                  true,
-                  quoteTokenProgram,
-                ),
-                isWritable: true,
-                isSigner: false,
-              },
-              {
-                pubkey: poolV2PdaKey,
-                isWritable: false,
-                isSigner: false,
-              },
-            ]).instruction(),
-          )
-        } else {
-          instructions.push(
-            await builder.remainingAccounts([
-              {
-                pubkey: poolV2PdaKey,
-                isWritable: false,
-                isSigner: false,
-              },
-            ]).instruction(),
-          )
-        }
-
-        if (baseMint.equals(WSOL_MINT)) {
-          instructions.push(
-            createCloseAccountInstruction(
-              userBaseTokenAccount,
-              user,
-              user,
-              undefined,
-              TOKEN_PROGRAM_ID,
-            ),
-          )
-        }
-
-        return instructions
-      },
+    const instructions = await (PUMP_AMM_SDK as any).buyInstructions(swapState, base, maxQuote)
+    const buyIxIndex = instructions.findIndex(
+      (ix: TransactionInstruction) => ix.programId.equals(PUMP_AMM_PROGRAM_ID) && ix.data.length > 8
     )
+    if (buyIxIndex < 0) {
+      throw new Error('buyExactQuoteIn account template not found')
+    }
+
+    const data = OFFLINE_PUMP_AMM_PROGRAM.coder.instruction.encode('buyExactQuoteIn', {
+      spendableQuoteIn,
+      minBaseAmountOut: base,
+      trackVolume: { 0: true },
+    })
+
+    instructions[buyIxIndex] = new TransactionInstruction({
+      programId: instructions[buyIxIndex].programId,
+      keys: instructions[buyIxIndex].keys,
+      data,
+    })
+
+    return instructions
   }
 
   getOpenPositions(): Position[] {
