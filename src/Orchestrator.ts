@@ -20,6 +20,7 @@ import {
   getLiveAttemptCooldownRemainingMs,
   getLiveSignalWindow,
   isCanaryQualificationBypassAllowed,
+  isCanarySignalBypassAllowed,
   isAssessmentQualifiedForLive,
   isLiveEntryCapReached,
   LiveExecutionConfig,
@@ -50,6 +51,7 @@ interface LiveSignalCandidate {
   fillRatio: number
   qualifiedFromHistory: boolean
   canaryQualificationBypass: boolean
+  canarySignalBypass: boolean
 }
 
 interface ResolvedEntryPrice {
@@ -546,6 +548,7 @@ export class Orchestrator {
           fillRatio,
           qualifiedFromHistory,
           canaryQualificationBypass,
+          canarySignalBypass: false,
         }
 
         if (!bestCandidate || this.isBetterLiveCandidate(candidate, bestCandidate)) {
@@ -553,6 +556,39 @@ export class Orchestrator {
         }
       } catch (e) {
         console.error('[Darwin] Live strategy evaluation error:', e)
+      }
+    }
+
+    if (!bestCandidate && firedStrategies === 0 && isCanarySignalBypassAllowed(this.liveExecutionConfig)) {
+      for (const strategy of strategies) {
+        const openCount = this.liveExecutor.getOpenPositionCount(strategy.id)
+        if (openCount >= strategy.genome.risk.maxConcurrent) continue
+
+        const assessment = strategy.getAssessment()
+        const sizing = this.bankroll.getSizingPlan(
+          strategy.genome.risk.capitalPct,
+          signal.liquiditySol,
+          strategy.genome.risk.maxPoolPct,
+          signal.type
+        )
+        const dynamicLiquidityFloor = this.getDynamicLiquidityFloor(signal.type, sizing.desiredSizeSol)
+        if (signal.liquiditySol > 0 && signal.liquiditySol < dynamicLiquidityFloor) continue
+
+        const sizeSol = Math.min(sizing.sizeSol, availableCapital * 0.95)
+        const fillRatio = sizing.desiredSizeSol > 0 ? sizeSol / sizing.desiredSizeSol : 0
+        if (sizeSol <= 0 || fillRatio < MIN_MEANINGFUL_FILL_RATIO || sizeSol < 0.00001) continue
+
+        bestCandidate = {
+          strategy,
+          assessment,
+          sizing,
+          sizeSol,
+          fillRatio,
+          qualifiedFromHistory: false,
+          canaryQualificationBypass: true,
+          canarySignalBypass: true,
+        }
+        break
       }
     }
 
@@ -568,6 +604,7 @@ export class Orchestrator {
             sizableQualifiedStrategies,
             minQualifiedTier: this.liveExecutionConfig.minQualifiedTier,
             minAssessmentTrades: this.liveExecutionConfig.minAssessmentTrades,
+            canarySignalBypassAllowed: isCanarySignalBypassAllowed(this.liveExecutionConfig),
           }
         )
       }
@@ -644,6 +681,7 @@ export class Orchestrator {
       ' | trades=' + bestCandidate.assessment.tradeCount +
       (bestCandidate.qualifiedFromHistory ? ' | historical-bootstrap' : '')
       + (bestCandidate.canaryQualificationBypass ? ' | canary-qualification-bypass' : '')
+      + (bestCandidate.canarySignalBypass ? ' | canary-signal-bypass' : '')
     )
 
     if (

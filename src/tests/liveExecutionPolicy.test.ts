@@ -5,6 +5,7 @@ import {
   getLiveAttemptCooldownRemainingMs,
   getLiveSignalWindow,
   isCanaryQualificationBypassAllowed,
+  isCanarySignalBypassAllowed,
   isLiveEntryCapReached,
   isAssessmentQualifiedForLive,
   resolveLiveExecutionConfig,
@@ -44,6 +45,7 @@ test('live execution config exposes conservative defaults', () => {
   assert.equal(config.maxNewEntries, 1)
   assert.equal(config.autoStopAfterEntry, true)
   assert.equal(config.canaryAllowUnqualified, false)
+  assert.equal(config.canaryAllowSignalBypass, false)
   assert.equal(config.migrationMaxAgeMs, 6000)
   assert.equal(config.migrationReadyDelayMs, 0)
   assert.equal(config.migrationPoolRetryAttempts, 2)
@@ -135,6 +137,31 @@ test('live canary qualification bypass is explicit and requires one-entry auto-s
     DARWIN_LIVE_AUTO_STOP_AFTER_ENTRY: 'false',
   })
   assert.equal(isCanaryQualificationBypassAllowed(noAutoStopConfig), false)
+})
+
+test('live canary signal bypass also requires the unqualified one-entry auto-stop guard', () => {
+  const guardedConfig = resolveLiveExecutionConfig({
+    DARWIN_LIVE_CANARY_ALLOW_UNQUALIFIED: 'true',
+    DARWIN_LIVE_CANARY_ALLOW_SIGNAL_BYPASS: 'true',
+    DARWIN_LIVE_MAX_NEW_ENTRIES: '1',
+    DARWIN_LIVE_AUTO_STOP_AFTER_ENTRY: 'true',
+  })
+  assert.equal(isCanarySignalBypassAllowed(guardedConfig), true)
+
+  const missingQualificationBypass = resolveLiveExecutionConfig({
+    DARWIN_LIVE_CANARY_ALLOW_SIGNAL_BYPASS: 'true',
+    DARWIN_LIVE_MAX_NEW_ENTRIES: '1',
+    DARWIN_LIVE_AUTO_STOP_AFTER_ENTRY: 'true',
+  })
+  assert.equal(isCanarySignalBypassAllowed(missingQualificationBypass), false)
+
+  const multiEntryConfig = resolveLiveExecutionConfig({
+    DARWIN_LIVE_CANARY_ALLOW_UNQUALIFIED: 'true',
+    DARWIN_LIVE_CANARY_ALLOW_SIGNAL_BYPASS: 'true',
+    DARWIN_LIVE_MAX_NEW_ENTRIES: '2',
+    DARWIN_LIVE_AUTO_STOP_AFTER_ENTRY: 'true',
+  })
+  assert.equal(isCanarySignalBypassAllowed(multiEntryConfig), false)
 })
 
 test('live signal type allowlist defaults to migration and accepts explicit overrides', () => {
