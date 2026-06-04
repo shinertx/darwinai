@@ -221,6 +221,47 @@ test('pending migration keeps rechecking until actionable or expired', async () 
   assert.equal(feed.pendingMigrationSignals.size, 0)
 })
 
+test('migration readiness checks only the primary pool candidate', async () => {
+  const feed = new MarketFeed() as any
+  const detectedAt = Date.now()
+  const primaryPool = 'BzFzZwYWakHKwVmrBExnoTLRMhh4GVLstL7gpNmy5oSe'
+  const secondaryPool = 'ADyA8hdefvWN2dbGGWFotbzWxrAvLW83WG6QCVXvJKqw'
+  const signal = makeSignal({
+    mint: 'mint_primary_candidate',
+    pool: primaryPool,
+    eventData: {
+      signature: 'sig_primary_candidate',
+      detectedAt,
+      detectedPoolCandidates: [
+        primaryPool,
+        secondaryPool,
+      ],
+    },
+    timestamp: detectedAt,
+  })
+
+  const attemptedPools: string[] = []
+  feed.migrationReadinessConfig = {
+    enabled: true,
+    attempts: 1,
+    intervalMs: 1,
+    lookupTimeoutMs: 1,
+    emitTxFallbackOnExpiry: false,
+  }
+  feed.migrationReadinessSdk = {
+    swapSolanaState: async (pool: PublicKey) => {
+      attemptedPools.push(pool.toBase58())
+      return null
+    },
+  }
+
+  await feed.waitForMigrationPoolReady(signal)
+
+  assert.deepEqual(attemptedPools, [
+    primaryPool,
+  ])
+})
+
 test('amm activity re-polls readiness on the promoted pool before emitting', async () => {
   const feed = new MarketFeed() as any
   const detectedAt = Date.now() - 250

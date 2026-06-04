@@ -568,7 +568,7 @@ export class MarketFeed extends EventEmitter {
       return null
     }
 
-    const candidatePools = Array.from(
+    const rawCandidatePools = Array.from(
       new Set(
         [
           signal.pool,
@@ -578,6 +578,9 @@ export class MarketFeed extends EventEmitter {
         ].filter((pool): pool is string => typeof pool === 'string' && pool.length > 20)
       )
     )
+    const candidatePools = signal.type === 'migration'
+      ? rawCandidatePools.slice(0, 1)
+      : rawCandidatePools
     if (candidatePools.length === 0) {
       return null
     }
