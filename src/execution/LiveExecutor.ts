@@ -95,7 +95,7 @@ function parseBooleanFlag(value: string | undefined): boolean {
   return normalized === 'true' || normalized === '1' || normalized === 'yes' || normalized === 'on'
 }
 
-function getSignalPoolCandidates(signal: MarketSignal): string[] {
+export function getSignalPoolCandidates(signal: MarketSignal): string[] {
   const rawCandidates = [
     signal.pool,
     ...(Array.isArray(signal.eventData?.detectedPoolCandidates)
@@ -107,6 +107,19 @@ function getSignalPoolCandidates(signal: MarketSignal): string[] {
   return Array.from(
     new Set(rawCandidates.filter((pool): pool is string => typeof pool === 'string' && pool.length > 20))
   )
+}
+
+export function getExecutionPoolCandidates(signal: MarketSignal): string[] {
+  const candidates = getSignalPoolCandidates(signal)
+
+  // PumpSwap migration/create-pool instructions put the pool account first.
+  // Retrying unrelated program, mint, and token accounts makes fresh pools age
+  // out before the real pool has a fair chance to resolve.
+  if (signal.type === 'migration') {
+    return candidates.slice(0, 1)
+  }
+
+  return candidates
 }
 
 function accountExists(accountInfo: { owner?: PublicKey | null } | null | undefined, owner: PublicKey): boolean {
@@ -285,7 +298,7 @@ export class LiveExecutor {
         return null
       }
 
-      const poolCandidates = getSignalPoolCandidates(signal)
+      const poolCandidates = getExecutionPoolCandidates(signal)
       if (poolCandidates.length === 0) {
         this.lastOpenFailureReason = 'live_pool_not_ready_post_feed'
         return null
@@ -508,7 +521,7 @@ export class LiveExecutor {
       return { tradable: false, reason: this.lastOpenFailureReason }
     }
 
-    const poolCandidates = getSignalPoolCandidates(signal)
+    const poolCandidates = getExecutionPoolCandidates(signal)
     if (poolCandidates.length === 0) {
       this.lastOpenFailureReason = 'live_pool_not_ready_post_feed'
       return { tradable: false, reason: this.lastOpenFailureReason }

@@ -11,6 +11,8 @@ import {
 import {
   detectStateRentBlockReason,
   detectStateRentBlockReasonFromLogs,
+  getExecutionPoolCandidates,
+  getSignalPoolCandidates,
   getWsolPoolSide,
 } from '../execution/LiveExecutor'
 import { MarketSignal } from '../types'
@@ -122,6 +124,47 @@ test('live executor recognizes both valid WSOL pool orientations', () => {
   assert.equal(getWsolPoolSide({ baseMint: token, quoteMint: wsol }), 'quote')
   assert.equal(getWsolPoolSide({ baseMint: wsol, quoteMint: token }), 'base')
   assert.equal(getWsolPoolSide({ baseMint: token, quoteMint: token }), null)
+})
+
+test('migration execution retries only the primary pool candidate', () => {
+  const signal = makeSignal({
+    type: 'migration',
+    pool: 'pool_primary_111111111111111111111111111111',
+    eventData: {
+      detectedPoolCandidates: [
+        'pool_primary_111111111111111111111111111111',
+        'token_mint_2222222222222222222222222222222',
+        'program_id_333333333333333333333333333333',
+      ],
+    },
+  })
+
+  assert.deepEqual(getSignalPoolCandidates(signal), [
+    'pool_primary_111111111111111111111111111111',
+    'token_mint_2222222222222222222222222222222',
+    'program_id_333333333333333333333333333333',
+  ])
+  assert.deepEqual(getExecutionPoolCandidates(signal), [
+    'pool_primary_111111111111111111111111111111',
+  ])
+})
+
+test('non-migration execution keeps fallback pool candidates', () => {
+  const signal = makeSignal({
+    type: 'amm_activity',
+    pool: 'pool_primary_111111111111111111111111111111',
+    eventData: {
+      detectedPoolCandidates: [
+        'pool_primary_111111111111111111111111111111',
+        'pool_secondary_222222222222222222222222222',
+      ],
+    },
+  })
+
+  assert.deepEqual(getExecutionPoolCandidates(signal), [
+    'pool_primary_111111111111111111111111111111',
+    'pool_secondary_222222222222222222222222222',
+  ])
 })
 
 test('state-rent preflight detects associated token account creation instructions', () => {

@@ -82,6 +82,7 @@ export class Orchestrator {
   private recentLiveAttemptAt: Map<string, number> = new Map()
   private liveEntriesOpened = 0
   private liveAutoStopScheduled = false
+  private liveOpenInFlight = false
 
   constructor() {
     this.runtime = resolveRuntimeConfig(process.env)
@@ -565,14 +566,27 @@ export class Orchestrator {
       return
     }
 
+    if (this.liveOpenInFlight) {
+      this.logSignalSkip(signal, 'live_open_in_flight', {
+        signalType: signal.type,
+      })
+      return
+    }
+
+    this.liveOpenInFlight = true
     this.recentLiveAttemptAt.set(signal.mint, Date.now())
-    const pos = await this.liveExecutor.open(
-      signal,
-      bestCandidate.strategy.genome,
-      bestCandidate.strategy.id,
-      bestCandidate.sizeSol,
-      entryPrice
-    )
+    let pos = null
+    try {
+      pos = await this.liveExecutor.open(
+        signal,
+        bestCandidate.strategy.genome,
+        bestCandidate.strategy.id,
+        bestCandidate.sizeSol,
+        entryPrice
+      )
+    } finally {
+      this.liveOpenInFlight = false
+    }
 
     if (!pos) {
       const failureReason = this.liveExecutor.consumeLastOpenFailureReason()
