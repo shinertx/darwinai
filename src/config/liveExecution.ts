@@ -9,6 +9,7 @@ export interface LiveExecutionConfig {
   minAssessmentTrades: number
   maxNewEntries: number
   autoStopAfterEntry: boolean
+  canaryAllowUnqualified: boolean
   signalMaxAgeMs: number
   migrationMaxAgeMs: number
   migrationReadyDelayMs: number
@@ -87,6 +88,7 @@ export function resolveLiveExecutionConfig(
     minAssessmentTrades: parsePositiveInt(env.DARWIN_LIVE_MIN_ASSESSMENT_TRADES, 10),
     maxNewEntries: parsePositiveInt(env.DARWIN_LIVE_MAX_NEW_ENTRIES, 1),
     autoStopAfterEntry: parseBooleanFlag(env.DARWIN_LIVE_AUTO_STOP_AFTER_ENTRY, true),
+    canaryAllowUnqualified: parseBooleanFlag(env.DARWIN_LIVE_CANARY_ALLOW_UNQUALIFIED, false),
     signalMaxAgeMs: parsePositiveInt(env.DARWIN_LIVE_SIGNAL_MAX_AGE_MS, 12_000),
     migrationMaxAgeMs: parsePositiveInt(env.DARWIN_LIVE_MIGRATION_MAX_AGE_MS, 6_000),
     migrationReadyDelayMs: parseNonNegativeInt(env.DARWIN_LIVE_MIGRATION_READY_DELAY_MS, 0),
@@ -173,6 +175,12 @@ export function isAssessmentQualifiedForLive(
   }
 
   return getTierPriority(assessment.tier) >= getTierPriority(config.minQualifiedTier)
+}
+
+export function isCanaryQualificationBypassAllowed(
+  config: Pick<LiveExecutionConfig, 'canaryAllowUnqualified' | 'maxNewEntries' | 'autoStopAfterEntry'>
+): boolean {
+  return config.canaryAllowUnqualified && config.maxNewEntries === 1 && config.autoStopAfterEntry
 }
 
 export function resolveLivePriorityMicro(

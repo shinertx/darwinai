@@ -4,6 +4,7 @@ import { PublicKey, TransactionInstruction } from '@solana/web3.js'
 import {
   getLiveAttemptCooldownRemainingMs,
   getLiveSignalWindow,
+  isCanaryQualificationBypassAllowed,
   isLiveEntryCapReached,
   isAssessmentQualifiedForLive,
   resolveLiveExecutionConfig,
@@ -42,6 +43,7 @@ test('live execution config exposes conservative defaults', () => {
   assert.equal(config.minAssessmentTrades, 10)
   assert.equal(config.maxNewEntries, 1)
   assert.equal(config.autoStopAfterEntry, true)
+  assert.equal(config.canaryAllowUnqualified, false)
   assert.equal(config.migrationMaxAgeMs, 6000)
   assert.equal(config.migrationReadyDelayMs, 0)
   assert.equal(config.migrationPoolRetryAttempts, 2)
@@ -107,6 +109,32 @@ test('live qualification requires both tier and enough observed trades', () => {
     isAssessmentQualifiedForLive({ tier: 'tier_c', tradeCount: 25 }, config),
     false
   )
+})
+
+test('live canary qualification bypass is explicit and requires one-entry auto-stop guards', () => {
+  const defaultConfig = resolveLiveExecutionConfig({})
+  assert.equal(isCanaryQualificationBypassAllowed(defaultConfig), false)
+
+  const guardedConfig = resolveLiveExecutionConfig({
+    DARWIN_LIVE_CANARY_ALLOW_UNQUALIFIED: 'true',
+    DARWIN_LIVE_MAX_NEW_ENTRIES: '1',
+    DARWIN_LIVE_AUTO_STOP_AFTER_ENTRY: 'true',
+  })
+  assert.equal(isCanaryQualificationBypassAllowed(guardedConfig), true)
+
+  const multiEntryConfig = resolveLiveExecutionConfig({
+    DARWIN_LIVE_CANARY_ALLOW_UNQUALIFIED: 'true',
+    DARWIN_LIVE_MAX_NEW_ENTRIES: '2',
+    DARWIN_LIVE_AUTO_STOP_AFTER_ENTRY: 'true',
+  })
+  assert.equal(isCanaryQualificationBypassAllowed(multiEntryConfig), false)
+
+  const noAutoStopConfig = resolveLiveExecutionConfig({
+    DARWIN_LIVE_CANARY_ALLOW_UNQUALIFIED: 'true',
+    DARWIN_LIVE_MAX_NEW_ENTRIES: '1',
+    DARWIN_LIVE_AUTO_STOP_AFTER_ENTRY: 'false',
+  })
+  assert.equal(isCanaryQualificationBypassAllowed(noAutoStopConfig), false)
 })
 
 test('live signal type allowlist defaults to migration and accepts explicit overrides', () => {

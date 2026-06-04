@@ -19,6 +19,7 @@ import { compareAssessments } from './evolution/MissionAssessment'
 import {
   getLiveAttemptCooldownRemainingMs,
   getLiveSignalWindow,
+  isCanaryQualificationBypassAllowed,
   isAssessmentQualifiedForLive,
   isLiveEntryCapReached,
   LiveExecutionConfig,
@@ -48,6 +49,7 @@ interface LiveSignalCandidate {
   sizeSol: number
   fillRatio: number
   qualifiedFromHistory: boolean
+  canaryQualificationBypass: boolean
 }
 
 interface ResolvedEntryPrice {
@@ -508,10 +510,14 @@ export class Orchestrator {
         const qualifiedFromHistory =
           strategy.wasSeededFromMemory() &&
           assessment.tradeCount < this.liveExecutionConfig.minAssessmentTrades
+        const canaryQualificationBypass =
+          !assessmentQualified &&
+          !qualifiedFromHistory &&
+          isCanaryQualificationBypassAllowed(this.liveExecutionConfig)
 
         if (assessmentQualified) assessmentQualifiedStrategies++
         if (qualifiedFromHistory) historicalQualifiedStrategies++
-        if (!assessmentQualified && !qualifiedFromHistory) continue
+        if (!assessmentQualified && !qualifiedFromHistory && !canaryQualificationBypass) continue
 
         const sizing = this.bankroll.getSizingPlan(
           strategy.genome.risk.capitalPct,
@@ -539,6 +545,7 @@ export class Orchestrator {
           sizeSol,
           fillRatio,
           qualifiedFromHistory,
+          canaryQualificationBypass,
         }
 
         if (!bestCandidate || this.isBetterLiveCandidate(candidate, bestCandidate)) {
@@ -636,6 +643,7 @@ export class Orchestrator {
       ' | tier=' + bestCandidate.assessment.tier.toUpperCase() +
       ' | trades=' + bestCandidate.assessment.tradeCount +
       (bestCandidate.qualifiedFromHistory ? ' | historical-bootstrap' : '')
+      + (bestCandidate.canaryQualificationBypass ? ' | canary-qualification-bypass' : '')
     )
 
     if (
