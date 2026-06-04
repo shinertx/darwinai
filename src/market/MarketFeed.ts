@@ -192,7 +192,7 @@ export class MarketFeed extends EventEmitter {
     this.connection = createRealtimeConnection(this.rpcUrl)
     this.fetchConnections = this.rpcUrls.map((url: string) => createSolanaConnection(url, 'confirmed'))
     this.migrationReadinessConnection = this.migrationReadinessConfig.enabled
-      ? createSolanaConnection(this.rpcUrl, 'processed')
+      ? new Connection(this.rpcUrl, 'processed')
       : null
     this.migrationReadinessSdk = this.migrationReadinessConnection
       ? new OnlinePumpAmmSdk(this.migrationReadinessConnection)
@@ -249,7 +249,7 @@ export class MarketFeed extends EventEmitter {
     this.connection = createRealtimeConnection(this.rpcUrl)
     this.fetchConnections = this.rpcUrls.map((url: string) => createSolanaConnection(url, 'confirmed'))
     this.migrationReadinessConnection = this.migrationReadinessConfig.enabled
-      ? createSolanaConnection(this.rpcUrl, 'processed')
+      ? new Connection(this.rpcUrl, 'processed')
       : null
     this.migrationReadinessSdk = this.migrationReadinessConnection
       ? new OnlinePumpAmmSdk(this.migrationReadinessConnection)
