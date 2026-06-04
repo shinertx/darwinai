@@ -10,7 +10,9 @@ import {
 } from '../config/liveExecution'
 import {
   detectStateRentBlockReason,
+  detectStateRentBlockReasons,
   detectStateRentBlockReasonFromLogs,
+  detectStateRentBlockReasonsFromLogs,
   getExecutionPoolCandidates,
   getSignalPoolCandidates,
   getWsolPoolSide,
@@ -204,4 +206,30 @@ test('state-rent simulation log detection catches ATA create and extend account'
     'pool_extend'
   )
   assert.equal(detectStateRentBlockReasonFromLogs(null), null)
+})
+
+test('state-rent detection preserves multiple setup reasons in order', () => {
+  const associatedTokenProgram = new PublicKey('ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL')
+  const pumpAmmProgram = new PublicKey('pAMMBay6oceH9fJKBRHGP5D4bD4sWpmSwMn52FMfXEA')
+  const extendDiscriminator = Uint8Array.from([234, 102, 194, 203, 150, 72, 62, 229])
+
+  const ataCreate = new TransactionInstruction({
+    programId: associatedTokenProgram,
+    keys: [],
+    data: Buffer.alloc(0),
+  })
+  const poolExtend = new TransactionInstruction({
+    programId: pumpAmmProgram,
+    keys: [],
+    data: Buffer.from(extendDiscriminator),
+  })
+
+  assert.deepEqual(detectStateRentBlockReasons([ataCreate, poolExtend]), ['ata_create', 'pool_extend'])
+  assert.deepEqual(
+    detectStateRentBlockReasonsFromLogs([
+      'Program log: Instruction: CreateIdempotent',
+      'Program log: Instruction: ExtendAccount',
+    ]),
+    ['ata_create', 'pool_extend']
+  )
 })

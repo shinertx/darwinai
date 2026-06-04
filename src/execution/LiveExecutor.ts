@@ -146,38 +146,58 @@ function instructionMatchesDiscriminator(
 export function detectStateRentBlockReason(
   instructions: Array<Pick<TransactionInstruction, 'programId' | 'data'>>
 ): StateRentBlockReason | null {
+  return detectStateRentBlockReasons(instructions)[0] || null
+}
+
+export function detectStateRentBlockReasons(
+  instructions: Array<Pick<TransactionInstruction, 'programId' | 'data'>>
+): StateRentBlockReason[] {
+  const reasons: StateRentBlockReason[] = []
+  const addReason = (reason: StateRentBlockReason): void => {
+    if (!reasons.includes(reason)) reasons.push(reason)
+  }
+
   for (const instruction of instructions) {
     if (instruction.programId.equals(ASSOCIATED_TOKEN_PROGRAM_ID)) {
-      return 'ata_create'
+      addReason('ata_create')
     }
 
     if (
       instruction.programId.equals(PUMP_AMM_PROGRAM_ID) &&
       instructionMatchesDiscriminator(instruction, EXTEND_ACCOUNT_DISCRIMINATOR)
     ) {
-      return 'pool_extend'
+      addReason('pool_extend')
     }
   }
 
-  return null
+  return reasons
 }
 
 export function detectStateRentBlockReasonFromLogs(logs: string[] | null | undefined): StateRentBlockReason | null {
+  return detectStateRentBlockReasonsFromLogs(logs)[0] || null
+}
+
+export function detectStateRentBlockReasonsFromLogs(logs: string[] | null | undefined): StateRentBlockReason[] {
+  const reasons: StateRentBlockReason[] = []
+  const addReason = (reason: StateRentBlockReason): void => {
+    if (!reasons.includes(reason)) reasons.push(reason)
+  }
+
   if (!logs?.length) {
-    return null
+    return reasons
   }
 
   for (const line of logs) {
     if (line.includes('CreateIdempotent')) {
-      return 'ata_create'
+      addReason('ata_create')
     }
 
     if (line.includes('Instruction: ExtendAccount')) {
-      return 'pool_extend'
+      addReason('pool_extend')
     }
   }
 
-  return null
+  return reasons
 }
 
 export function getWsolPoolSide(pool: {
@@ -216,6 +236,7 @@ export class LiveExecutor {
   private settlementHttpTimeoutMs: number
   private settlementShadowMode: boolean
   private settlementStrictMode: boolean
+  private allowedStateRentReasons: Set<StateRentBlockReason>
   private liveConfig = resolveLiveExecutionConfig(process.env)
   private configuredTradeSizeSol: number
   private minBalanceSol: number
@@ -253,6 +274,13 @@ export class LiveExecutor {
     this.settlementHttpTimeoutMs = Number.parseInt(process.env.SETTLEMENT_HTTP_TIMEOUT_MS || '15000', 10) || 15000
     this.settlementShadowMode = parseBooleanFlag(process.env.DARWIN_SETTLEMENT_SHADOW_MODE)
     this.settlementStrictMode = parseBooleanFlag(process.env.DARWIN_SETTLEMENT_STRICT)
+    this.allowedStateRentReasons = new Set<StateRentBlockReason>()
+    if (parseBooleanFlag(process.env.DARWIN_LIVE_ALLOW_ATA_CREATE)) {
+      this.allowedStateRentReasons.add('ata_create')
+    }
+    if (parseBooleanFlag(process.env.DARWIN_LIVE_ALLOW_POOL_EXTEND)) {
+      this.allowedStateRentReasons.add('pool_extend')
+    }
 
     console.log('[Live] Executor ready. Wallet:', this.wallet.publicKey.toBase58())
     console.log('[Live] Trade size:', this.configuredTradeSizeSol, 'SOL | Floor:', this.minBalanceSol, 'SOL')
@@ -267,6 +295,9 @@ export class LiveExecutor {
       }
     } else {
       console.log('[Live] Settlement routing disabled (using direct RPC sendRawTransaction).')
+    }
+    if (this.allowedStateRentReasons.size > 0) {
+      console.log('[Live] Allowed state-rent setup:', Array.from(this.allowedStateRentReasons).join(','))
     }
   }
 
@@ -603,7 +634,7 @@ export class LiveExecutor {
       return { tradable: false, reason: this.lastOpenFailureReason }
     }
 
-    const stateRentBlockReason = detectStateRentBlockReason(ixs)
+    const stateRentBlockReason = this.findDisallowedStateRentBlockReason(detectStateRentBlockReasons(ixs))
     if (stateRentBlockReason) {
       this.lastOpenFailureReason = `state_rent_blocked:${stateRentBlockReason}`
       return { tradable: false, reason: this.lastOpenFailureReason }
@@ -782,7 +813,7 @@ export class LiveExecutor {
             }),
             ...ixs,
           ]
-      const stateRentBlockReason = detectStateRentBlockReason(instructions)
+      const stateRentBlockReason = this.findDisallowedStateRentBlockReason(detectStateRentBlockReasons(instructions))
       if (stateRentBlockReason) {
         this.lastOpenFailureReason = `state_rent_blocked:${stateRentBlockReason}`
         console.log(
@@ -867,6 +898,10 @@ export class LiveExecutor {
 
   private isSettlementEnabled(): boolean {
     return Boolean(this.settlementApiUrl && this.settlementLandKey)
+  }
+
+  private findDisallowedStateRentBlockReason(reasons: StateRentBlockReason[]): StateRentBlockReason | null {
+    return reasons.find((reason) => !this.allowedStateRentReasons.has(reason)) || null
   }
 
   private async sendWithSettlement(
@@ -1076,7 +1111,9 @@ export class LiveExecutor {
       replaceRecentBlockhash: false,
       sigVerify: true,
     })
-    const blockedByStateRent = detectStateRentBlockReasonFromLogs(simulation.value.logs)
+    const blockedByStateRent = this.findDisallowedStateRentBlockReason(
+      detectStateRentBlockReasonsFromLogs(simulation.value.logs)
+    )
 
     console.log(
       '[Live] settlement shadow result:',
