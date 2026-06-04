@@ -41,6 +41,16 @@ test('migration feed readiness config defaults to a fast live queue', () => {
   assert.equal(config.attempts, 6)
   assert.equal(config.intervalMs, 250)
   assert.equal(config.lookupTimeoutMs, 900)
+  assert.equal(config.emitTxFallbackOnExpiry, false)
+})
+
+test('migration feed readiness can opt into tx fallback on expiry', () => {
+  const config = resolveMigrationFeedReadinessConfig({
+    DARWIN_MODE: 'live',
+    DARWIN_MIGRATION_EMIT_TX_FALLBACK_ON_EXPIRY: 'true',
+  })
+
+  assert.equal(config.emitTxFallbackOnExpiry, true)
 })
 
 test('migration feed readiness accepts either WSOL pool orientation', () => {
@@ -123,6 +133,52 @@ test('pending migration timeout logs the feed readiness skip reason and emits no
   }
   assert.equal(skippedEvent.reason, 'migration_pool_not_ready_in_feed')
   assert.equal(skippedEvent.signal.mint, signal.mint)
+  assert.equal(feed.pendingMigrationSignals.size, 0)
+})
+
+test('pending migration expiry can emit tx fallback when explicitly enabled', async () => {
+  const feed = new MarketFeed() as any
+  const detectedAt = Date.now() - 5_000
+  const signal = makeSignal({
+    mint: 'mint_tx_fallback',
+    pool: 'pool_tx_fallback',
+    liquiditySol: 75,
+    eventData: { signature: 'sig_tx_fallback', detectedAt },
+    timestamp: detectedAt,
+  })
+
+  let emitted: MarketSignal | null = null
+  let skipped = false
+  feed.on('signal', (nextSignal: MarketSignal) => {
+    emitted = nextSignal
+  })
+  feed.on('signal_skipped', () => {
+    skipped = true
+  })
+  feed.migrationReadinessConfig = {
+    enabled: true,
+    attempts: 1,
+    intervalMs: 1,
+    lookupTimeoutMs: 1,
+    emitTxFallbackOnExpiry: true,
+  }
+  feed.waitForMigrationPoolReady = async () => null
+  feed.pendingMigrationSignals.set(signal.pool, {
+    signal,
+    detectedAt,
+    expiresAt: 0,
+  })
+
+  await feed.processPendingMigration(signal.pool)
+
+  const emittedSignal = emitted as MarketSignal | null
+  if (!emittedSignal) {
+    assert.fail('expected tx fallback migration to emit')
+  }
+  assert.equal(skipped, false)
+  assert.equal(emittedSignal.mint, signal.mint)
+  assert.equal(emittedSignal.pool, signal.pool)
+  assert.equal(emittedSignal.eventData.readySource, 'tx_fallback')
   assert.equal(feed.pendingMigrationSignals.size, 0)
 })
 

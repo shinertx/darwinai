@@ -23,6 +23,7 @@ export interface MigrationFeedReadinessConfig {
   attempts: number
   intervalMs: number
   lookupTimeoutMs: number
+  emitTxFallbackOnExpiry: boolean
 }
 
 type PendingMigrationSignal = {
@@ -63,6 +64,12 @@ function parsePositiveInt(value: string | undefined, fallback: number): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
 }
 
+function parseBooleanFlag(value: string | undefined, fallback: boolean): boolean {
+  if (value === undefined) return fallback
+  const normalized = value.trim().toLowerCase()
+  return normalized === 'true' || normalized === '1' || normalized === 'yes' || normalized === 'on'
+}
+
 function parsePrivateKeyToPublicKey(value: string | undefined): PublicKey | null {
   if (!value) return null
   try {
@@ -93,6 +100,7 @@ export function resolveMigrationFeedReadinessConfig(
     attempts: parsePositiveInt(env.DARWIN_MIGRATION_FEED_READY_ATTEMPTS, 6),
     intervalMs: parsePositiveInt(env.DARWIN_MIGRATION_FEED_READY_INTERVAL_MS, 250),
     lookupTimeoutMs: parsePositiveInt(env.DARWIN_MIGRATION_FEED_LOOKUP_TIMEOUT_MS, 900),
+    emitTxFallbackOnExpiry: parseBooleanFlag(env.DARWIN_MIGRATION_EMIT_TX_FALLBACK_ON_EXPIRY, false),
   }
 }
 
@@ -602,7 +610,7 @@ export class MarketFeed extends EventEmitter {
     key: string,
     pending: PendingMigrationSignal,
     readyAt: number,
-    readySource: 'swap_state' | 'amm_activity',
+    readySource: 'swap_state' | 'amm_activity' | 'tx_fallback',
     overrides: ActionableMigrationOverrides = {}
   ): void {
     const readyPool = overrides.pool || pending.signal.pool
@@ -949,6 +957,22 @@ export class MarketFeed extends EventEmitter {
   }
 
   private expirePendingMigration(key: string, pending: PendingMigrationSignal): void {
+    if (
+      this.migrationReadinessConfig.emitTxFallbackOnExpiry &&
+      pending.signal.mint &&
+      pending.signal.pool &&
+      pending.signal.liquiditySol > 0
+    ) {
+      this.emitActionablePendingMigration(
+        key,
+        pending,
+        Date.now(),
+        'tx_fallback',
+        { pool: pending.signal.pool }
+      )
+      return
+    }
+
     this.emitSignalSkip(pending.signal, 'migration_pool_not_ready_in_feed', {
       pool: pending.signal.pool,
       detectedAt: pending.detectedAt,
