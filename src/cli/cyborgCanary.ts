@@ -89,6 +89,22 @@ type CanaryResult = {
   shapeBlockers: string[]
   estimatedLaterBuyFlowRate: number | null
   estimatedThreePlusLaterBuyWalletRate: number | null
+  strategyConfig: {
+    scorer: {
+      minScore: number
+      maxBuyCompetitors5s: number
+      maxInteractingWallets5s: number
+      minLiquiditySol: number
+      requireUniqueCreator: boolean
+    }
+    alertWindowMs: number
+    allowedStateRentSetup: {
+      ataCreate: boolean
+      poolExtend: boolean
+      closeTokenAtaOnSell: boolean
+    }
+    settlementRoute: 'direct_rpc'
+  }
 }
 
 const WSOL_MINT = 'So11111111111111111111111111111111111111112'
@@ -244,7 +260,9 @@ async function executeCanary(
   state: PoolWatchState,
   canarySizeSol: number,
   outputDir: string,
-  shapeScore: CyborgShapeScore
+  shapeScore: CyborgShapeScore,
+  shapeConfig: ReturnType<typeof resolveCyborgShapeScoringConfig>,
+  alertWindowMs: number
 ): Promise<CanaryResult | null> {
   const nowMs = Date.now()
   const signal = deriveSignalFromPool(state, nowMs)
@@ -321,6 +339,22 @@ async function executeCanary(
     shapeBlockers: [...shapeScore.blockers],
     estimatedLaterBuyFlowRate: shapeScore.estimatedLaterBuyFlowRate,
     estimatedThreePlusLaterBuyWalletRate: shapeScore.estimatedThreePlusLaterBuyWalletRate,
+    strategyConfig: {
+      scorer: {
+        minScore: shapeConfig.minScore,
+        maxBuyCompetitors5s: shapeConfig.maxBuyCompetitors5s,
+        maxInteractingWallets5s: shapeConfig.maxInteractingWallets5s,
+        minLiquiditySol: shapeConfig.minLiquiditySol,
+        requireUniqueCreator: shapeConfig.requireUniqueCreator,
+      },
+      alertWindowMs,
+      allowedStateRentSetup: {
+        ataCreate: ['true', '1', 'yes', 'on'].includes((process.env.DARWIN_LIVE_ALLOW_ATA_CREATE || '').toLowerCase()),
+        poolExtend: ['true', '1', 'yes', 'on'].includes((process.env.DARWIN_LIVE_ALLOW_POOL_EXTEND || '').toLowerCase()),
+        closeTokenAtaOnSell: ['true', '1', 'yes', 'on'].includes((process.env.DARWIN_LIVE_CLOSE_TOKEN_ATA_ON_SELL || '').toLowerCase()),
+      },
+      settlementRoute: 'direct_rpc',
+    },
   }
 
   const outPath = path.join(
@@ -505,7 +539,9 @@ async function main(): Promise<void> {
             state,
             canarySizeSol,
             outputDir,
-            shapeScore
+            shapeScore,
+            shapeConfig,
+            alertWindowMs
           )
           if (result) {
             process.exit(result.flattened ? 0 : 3)

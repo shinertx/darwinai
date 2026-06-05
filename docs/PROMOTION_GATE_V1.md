@@ -66,6 +66,8 @@ npm run promotion:gate
 
 The command writes a durable record under `data/promotion-gate/`. A `FAIL` exits non-zero and must block size increases.
 
+Cyborg canary result files include the scorer threshold, alert window, live state-rent permissions, close-on-sell setting, and execution route. The evidence builder includes that config in `strategyHash` and rejects selected loops with mixed configs.
+
 To run the full foreground batch loop, after the non-trading PumpSwap meta observer is collecting `events-*.jsonl`:
 
 ```bash

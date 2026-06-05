@@ -21,6 +21,7 @@ type CyborgCanaryResult = {
   buySignature: string | null
   sellSignature: string | null
   flattened: boolean
+  strategyConfig?: unknown
 }
 
 function parsePositiveInt(value: string | undefined, fallback: number): number {
@@ -43,6 +44,13 @@ function getGitHead(): string {
 
 function sha256(value: unknown): string {
   return crypto.createHash('sha256').update(JSON.stringify(value)).digest('hex')
+}
+
+function cyborgResultStrategyConfig(result: CyborgCanaryResult): unknown {
+  return result.strategyConfig || {
+    legacyResultWithoutStrategyConfig: true,
+    sizeSol: result.sizeSol,
+  }
 }
 
 function readJsonFile(filePath: string): CyborgCanaryResult {
@@ -113,11 +121,18 @@ async function main(): Promise<void> {
   const wallet = results[0].result.wallet
   const sizeSol = results[0].result.sizeSol
   const gitHead = getGitHead()
+  const strategyConfig = cyborgResultStrategyConfig(results[0].result)
+  const strategyConfigHash = sha256(strategyConfig)
+  const mixedConfig = results.find(({ result }) => sha256(cyborgResultStrategyConfig(result)) !== strategyConfigHash)
+  if (mixedConfig) {
+    throw new Error(`Mixed cyborg strategy configs in selected loops; first mismatch: ${path.basename(mixedConfig.filePath)}`)
+  }
   const strategyHash = process.env.PROMOTION_STRATEGY_HASH || sha256({
     strategyId,
     source: 'src/cli/cyborgCanary.ts',
     codeCommit: gitHead,
     sizeSol,
+    strategyConfig,
   })
 
   const loops: PromotionLoopEvidence[] = results.map(({ result }) => ({
