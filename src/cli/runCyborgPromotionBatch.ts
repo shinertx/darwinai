@@ -65,6 +65,8 @@ async function main(): Promise<void> {
   const attemptTimeoutMs = parsePositiveInt(process.env.PUMPSWAP_CYBORG_CANARY_TIMEOUT_MS, 20 * 60 * 1000)
   const canarySizeSol = parsePositiveFloat(process.env.PUMPSWAP_CYBORG_CANARY_SIZE_SOL, 0.0001)
   const stopOnNonPositiveLoop = parseBool(process.env.CYBORG_PROMOTION_STOP_ON_NON_POSITIVE_LOOP, false)
+  const allowPoolExtend = parseBool(process.env.DARWIN_LIVE_ALLOW_POOL_EXTEND, false)
+  const allowQuarantinedPoolExtend = parseBool(process.env.CYBORG_PROMOTION_ALLOW_QUARANTINED_POOL_EXTEND, false)
   const outputDir = path.resolve(process.cwd(), process.env.PUMPSWAP_META_OUTPUT_DIR || 'data/meta-observer')
   const promotionDir = path.resolve(process.cwd(), process.env.PROMOTION_GATE_OUTPUT_DIR || 'data/promotion-gate')
   const strategyId = (process.env.PROMOTION_STRATEGY_ID || 'cyborg-canary').trim()
@@ -75,6 +77,9 @@ async function main(): Promise<void> {
 
   if (!fs.existsSync(cyborgScript) || !fs.existsSync(evidenceScript) || !fs.existsSync(gateScript)) {
     throw new Error('Batch runner requires built dist files. Run npm run build first.')
+  }
+  if (allowPoolExtend && !allowQuarantinedPoolExtend) {
+    throw new Error('Pool-extension promotion batches are quarantined after the 2026-06-05 negative unflattened loop. Set CYBORG_PROMOTION_ALLOW_QUARANTINED_POOL_EXTEND=true only for a one-off diagnostic, never for promotion.')
   }
 
   fs.mkdirSync(outputDir, { recursive: true })
@@ -98,11 +103,13 @@ async function main(): Promise<void> {
       PUMPSWAP_META_OUTPUT_DIR: outputDir,
       PUMPSWAP_CYBORG_CANARY_SIZE_SOL: canarySizeSol.toString(),
       PUMPSWAP_CYBORG_CANARY_TIMEOUT_MS: attemptTimeoutMs.toString(),
+      PUMPSWAP_CYBORG_EXECUTION_DEFER_MS: process.env.PUMPSWAP_CYBORG_EXECUTION_DEFER_MS || '15000',
       DARWIN_MODE: 'live',
       LIVE_TRADE_SIZE_SOL: canarySizeSol.toString(),
       LIVE_MIN_BALANCE_SOL: process.env.LIVE_MIN_BALANCE_SOL || '0.003',
+      DARWIN_LIVE_SIGNAL_MAX_AGE_MS: process.env.DARWIN_LIVE_SIGNAL_MAX_AGE_MS || '90000',
       DARWIN_LIVE_ALLOW_ATA_CREATE: 'true',
-      DARWIN_LIVE_ALLOW_POOL_EXTEND: process.env.DARWIN_LIVE_ALLOW_POOL_EXTEND || 'false',
+      DARWIN_LIVE_ALLOW_POOL_EXTEND: allowPoolExtend ? 'true' : 'false',
       DARWIN_LIVE_CLOSE_TOKEN_ATA_ON_SELL: 'true',
     })
 

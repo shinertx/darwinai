@@ -98,6 +98,8 @@ type CanaryResult = {
       requireUniqueCreator: boolean
     }
     alertWindowMs: number
+    executionDeferMs: number
+    liveSignalMaxAgeMs: string | null
     allowedStateRentSetup: {
       ataCreate: boolean
       poolExtend: boolean
@@ -111,6 +113,7 @@ const WSOL_MINT = 'So11111111111111111111111111111111111111112'
 const DEFAULT_ALERT_WINDOW_MS = 5_000
 const DEFAULT_CANARY_SIZE_SOL = 0.0001
 const DEFAULT_TIMEOUT_MS = 30 * 60 * 1000
+const DEFAULT_EXECUTION_DEFER_MS = 0
 const TOKEN_FLAT_DUST_RAW = 1_000n
 
 function parsePositiveFloat(value: string | undefined, fallback: number): number {
@@ -121,6 +124,11 @@ function parsePositiveFloat(value: string | undefined, fallback: number): number
 function parsePositiveInt(value: string | undefined, fallback: number): number {
   const parsed = Number.parseInt(value || '', 10)
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
+}
+
+function parseNonNegativeInt(value: string | undefined, fallback: number): number {
+  const parsed = Number.parseInt(value || '', 10)
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback
 }
 
 function resolveWallet(): Keypair {
@@ -262,7 +270,8 @@ async function executeCanary(
   outputDir: string,
   shapeScore: CyborgShapeScore,
   shapeConfig: ReturnType<typeof resolveCyborgShapeScoringConfig>,
-  alertWindowMs: number
+  alertWindowMs: number,
+  executionDeferMs: number
 ): Promise<CanaryResult | null> {
   const nowMs = Date.now()
   const signal = deriveSignalFromPool(state, nowMs)
@@ -348,6 +357,8 @@ async function executeCanary(
         requireUniqueCreator: shapeConfig.requireUniqueCreator,
       },
       alertWindowMs,
+      executionDeferMs,
+      liveSignalMaxAgeMs: process.env.DARWIN_LIVE_SIGNAL_MAX_AGE_MS || null,
       allowedStateRentSetup: {
         ataCreate: ['true', '1', 'yes', 'on'].includes((process.env.DARWIN_LIVE_ALLOW_ATA_CREATE || '').toLowerCase()),
         poolExtend: ['true', '1', 'yes', 'on'].includes((process.env.DARWIN_LIVE_ALLOW_POOL_EXTEND || '').toLowerCase()),
@@ -381,6 +392,7 @@ async function main(): Promise<void> {
   process.env.SETTLEMENT_TXREADY_API_KEY = ''
 
   const alertWindowMs = parsePositiveInt(process.env.PUMPSWAP_CYBORG_ALERT_WINDOW_MS, DEFAULT_ALERT_WINDOW_MS)
+  const executionDeferMs = parseNonNegativeInt(process.env.PUMPSWAP_CYBORG_EXECUTION_DEFER_MS, DEFAULT_EXECUTION_DEFER_MS)
   const canarySizeSol = parsePositiveFloat(process.env.PUMPSWAP_CYBORG_CANARY_SIZE_SOL, DEFAULT_CANARY_SIZE_SOL)
   const timeoutMs = parsePositiveInt(process.env.PUMPSWAP_CYBORG_CANARY_TIMEOUT_MS, DEFAULT_TIMEOUT_MS)
   const outputDir = path.resolve(process.cwd(), process.env.PUMPSWAP_META_OUTPUT_DIR || 'data/meta-observer')
@@ -403,7 +415,8 @@ async function main(): Promise<void> {
     `maxBuy5s=${shapeConfig.maxBuyCompetitors5s}`,
     `maxInteractions5s=${shapeConfig.maxInteractingWallets5s}`,
     `minLiquiditySol=${shapeConfig.minLiquiditySol.toFixed(2)}`,
-    `requireUniqueCreator=${shapeConfig.requireUniqueCreator}`
+    `requireUniqueCreator=${shapeConfig.requireUniqueCreator}`,
+    `executionDeferMs=${executionDeferMs}`
   )
   console.log('[CyborgCanary] Settlement shadow mode overridden to false for this process')
   console.log('[CyborgCanary] Settlement routing disabled for this process; using direct RPC submit path')
@@ -451,7 +464,7 @@ async function main(): Promise<void> {
         timer: null,
       }
       activePools.set(state.pool, state)
-      const delayMs = Math.max(0, state.anchorTimeMs + alertWindowMs - Date.now())
+      const delayMs = Math.max(0, state.anchorTimeMs + alertWindowMs + executionDeferMs - Date.now())
       state.timer = setTimeout(async () => {
         if (executing) return
         if (handledPools.has(state.pool)) return
@@ -541,7 +554,8 @@ async function main(): Promise<void> {
             outputDir,
             shapeScore,
             shapeConfig,
-            alertWindowMs
+            alertWindowMs,
+            executionDeferMs
           )
           if (result) {
             process.exit(result.flattened ? 0 : 3)
