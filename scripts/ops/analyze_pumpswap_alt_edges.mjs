@@ -55,8 +55,17 @@ function resolveLatestMatchedFile(outputDir, prefix) {
   return candidates.at(-1) || null
 }
 
-function readJson(filePath) {
-  return JSON.parse(fs.readFileSync(filePath, 'utf8'))
+function readJsonOrJsonl(filePath) {
+  const raw = fs.readFileSync(filePath, 'utf8').trim()
+  if (!raw) return []
+  if (filePath.endsWith('.jsonl')) {
+    return raw
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .map((line) => JSON.parse(line))
+  }
+  return JSON.parse(raw)
 }
 
 function average(values) {
@@ -199,8 +208,8 @@ function summarizeGroup(pools, followOnByPool, rentByPool, creatorCounts, extraF
 }
 
 async function main() {
-  const pools = readJson(poolsFile)
-  const rentAudit = readJson(rentAuditFile)
+  const pools = readJsonOrJsonl(poolsFile)
+  const rentAudit = readJsonOrJsonl(rentAuditFile)
   const poolById = new Map(pools.map((pool) => [pool.pool, pool]))
   const rentByPool = new Map((Array.isArray(rentAudit) ? rentAudit : rentAudit.rows || []).map((row) => [row.pool, row]))
   const creatorCounts = new Map()
