@@ -182,6 +182,14 @@ npm run analyze:pumpswap:alt-edges
 
 This only produces offline promotion context. A cohort marked `PAPER_CANDIDATE` is still not live promotion proof; it only earns deeper paper/historical testing before a tiny canary.
 
+If the observer has a usable `events-*.jsonl` file but no non-empty `pools-*.jsonl` summary, use the event-derived analyzer:
+
+```bash
+PUMPSWAP_EVENT_COHORT_REQUIRED_GROSS_EDGE_PCT=2411.44 \
+PUMPSWAP_EVENT_COHORT_REQUIRE_LEGITIMATE_FOR_PROMOTION=true \
+npm run analyze:pumpswap:event-cohorts
+```
+
 That script requires local PumpSwap observer outputs such as:
 
 - `pools-*.json`
