@@ -67,6 +67,7 @@ async function main(): Promise<void> {
   const stopOnNonPositiveLoop = parseBool(process.env.CYBORG_PROMOTION_STOP_ON_NON_POSITIVE_LOOP, false)
   const outputDir = path.resolve(process.cwd(), process.env.PUMPSWAP_META_OUTPUT_DIR || 'data/meta-observer')
   const promotionDir = path.resolve(process.cwd(), process.env.PROMOTION_GATE_OUTPUT_DIR || 'data/promotion-gate')
+  const strategyId = (process.env.PROMOTION_STRATEGY_ID || 'cyborg-canary').trim()
   const startedAtMs = Date.now()
   const cyborgScript = path.resolve(process.cwd(), 'dist/cli/cyborgCanary.js')
   const evidenceScript = path.resolve(process.cwd(), 'dist/cli/buildCyborgPromotionEvidence.js')
@@ -165,7 +166,7 @@ async function main(): Promise<void> {
     process.exit(evidenceCode)
   }
 
-  const evidencePath = latestFile(promotionDir, 'evidence-cyborg-canary-')
+  const evidencePath = latestFile(promotionDir, `evidence-${strategyId}-`)
   if (!evidencePath) {
     throw new Error('Evidence file was not produced')
   }
