@@ -13,6 +13,8 @@
 - Never start, stop, or restart `darwin-live` as part of autoresearch or routine cleanup.
 - Never commit secrets, wallet keys, RPC URLs with credentials, or provider tokens.
 - Keep runtime churn out of git: logs, DB files, jsonl outputs, and local env files stay untracked.
+- Darwin's north star and 24-hour money gate live in `docs/DARWIN_Z_GOAL.md`; read it before live, canary, or promotion work.
+- No strategy may receive larger live size unless Promotion Gate v1 in `docs/PROMOTION_GATE_V1.md` emits an explicit `PASS` record.
 
 ## Autoresearch Scope
 

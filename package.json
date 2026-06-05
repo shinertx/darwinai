@@ -16,6 +16,7 @@
     "eval-window:research": "DB_PATH=data/research/darwin.db node dist/cli/eval-window.js",
     "observe:pumpswap:meta": "node dist/cli/pumpswapMetaObserver.js",
     "close:canary": "node dist/cli/closeCanaryPosition.js",
+    "promotion:gate": "node dist/cli/promotionGate.js",
     "run:cyborg:canary": "node dist/cli/cyborgCanary.js",
     "watch:pumpswap:cyborg": "node dist/cli/watchPumpswapCyborgAlerts.js",
     "analyze:pumpswap:alt-edges": "node scripts/ops/analyze_pumpswap_alt_edges.mjs",
