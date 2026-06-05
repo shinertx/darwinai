@@ -2,10 +2,18 @@ import { spawn } from 'child_process'
 import fs from 'fs'
 import path from 'path'
 import dotenv from 'dotenv'
+import { resolveCyborgShapeScoringConfig } from '../observatory/cyborgShapeScoring'
+import { resolveCyborgStrategyConfig } from '../observatory/cyborgStrategyConfig'
+import { evaluateCyborgProfitabilityPreflight } from '../promotion/CyborgProfitabilityPreflight'
 
 function parsePositiveInt(value: string | undefined, fallback: number): number {
   const parsed = Number.parseInt(value || '', 10)
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
+}
+
+function parseNonNegativeInt(value: string | undefined, fallback: number): number {
+  const parsed = Number.parseInt(value || '', 10)
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback
 }
 
 function parsePositiveFloat(value: string | undefined, fallback: number): number {
@@ -67,6 +75,15 @@ async function main(): Promise<void> {
   const stopOnNonPositiveLoop = parseBool(process.env.CYBORG_PROMOTION_STOP_ON_NON_POSITIVE_LOOP, false)
   const allowPoolExtend = parseBool(process.env.DARWIN_LIVE_ALLOW_POOL_EXTEND, false)
   const allowQuarantinedPoolExtend = parseBool(process.env.CYBORG_PROMOTION_ALLOW_QUARANTINED_POOL_EXTEND, false)
+  const allowKnownUnprofitable = parseBool(process.env.CYBORG_PROMOTION_ALLOW_KNOWN_UNPROFITABLE, false)
+  const profitPreflightLookbackMs = parsePositiveInt(
+    process.env.CYBORG_PROMOTION_PROFIT_PREFLIGHT_LOOKBACK_MS,
+    7 * 24 * 60 * 60 * 1000
+  )
+  const profitPreflightMinObservedLoops = parsePositiveInt(
+    process.env.CYBORG_PROMOTION_PROFIT_PREFLIGHT_MIN_OBSERVED_LOOPS,
+    1
+  )
   const outputDir = path.resolve(process.cwd(), process.env.PUMPSWAP_META_OUTPUT_DIR || 'data/meta-observer')
   const promotionDir = path.resolve(process.cwd(), process.env.PROMOTION_GATE_OUTPUT_DIR || 'data/promotion-gate')
   const strategyId = (process.env.PROMOTION_STRATEGY_ID || 'cyborg-canary').trim()
@@ -82,8 +99,42 @@ async function main(): Promise<void> {
     throw new Error('Pool-extension promotion batches are quarantined after the 2026-06-05 negative unflattened loop. Set CYBORG_PROMOTION_ALLOW_QUARANTINED_POOL_EXTEND=true only for a one-off diagnostic, never for promotion.')
   }
 
+  const canaryEnv: NodeJS.ProcessEnv = {
+    ...process.env,
+    PUMPSWAP_META_OUTPUT_DIR: outputDir,
+    PUMPSWAP_CYBORG_CANARY_SIZE_SOL: canarySizeSol.toString(),
+    PUMPSWAP_CYBORG_CANARY_TIMEOUT_MS: attemptTimeoutMs.toString(),
+    PUMPSWAP_CYBORG_EXECUTION_DEFER_MS: process.env.PUMPSWAP_CYBORG_EXECUTION_DEFER_MS || '15000',
+    DARWIN_MODE: 'live',
+    LIVE_TRADE_SIZE_SOL: canarySizeSol.toString(),
+    LIVE_MIN_BALANCE_SOL: process.env.LIVE_MIN_BALANCE_SOL || '0.003',
+    DARWIN_LIVE_SIGNAL_MAX_AGE_MS: process.env.DARWIN_LIVE_SIGNAL_MAX_AGE_MS || '90000',
+    DARWIN_LIVE_ALLOW_ATA_CREATE: 'true',
+    DARWIN_LIVE_ALLOW_POOL_EXTEND: allowPoolExtend ? 'true' : 'false',
+    DARWIN_LIVE_CLOSE_TOKEN_ATA_ON_SELL: 'true',
+  }
+
   fs.mkdirSync(outputDir, { recursive: true })
   fs.mkdirSync(promotionDir, { recursive: true })
+
+  const executionDeferMs = parseNonNegativeInt(canaryEnv.PUMPSWAP_CYBORG_EXECUTION_DEFER_MS, 15_000)
+  const alertWindowMs = parsePositiveInt(canaryEnv.PUMPSWAP_CYBORG_ALERT_WINDOW_MS, 5_000)
+  const shapeConfig = resolveCyborgShapeScoringConfig(canaryEnv)
+  const profitabilityPreflight = evaluateCyborgProfitabilityPreflight({
+    inputDir: outputDir,
+    canarySizeSol,
+    strategyConfig: resolveCyborgStrategyConfig(canaryEnv, shapeConfig, alertWindowMs, executionDeferMs),
+    lookbackMs: profitPreflightLookbackMs,
+    minObservedLoops: profitPreflightMinObservedLoops,
+    allowKnownUnprofitable,
+  })
+  console.log('[CyborgPromotionBatch] Profitability preflight:', profitabilityPreflight.message)
+  if (profitabilityPreflight.evidenceFiles.length > 0) {
+    console.log('[CyborgPromotionBatch] Blocking evidence:', profitabilityPreflight.evidenceFiles.join(', '))
+  }
+  if (!profitabilityPreflight.allowed) {
+    throw new Error(profitabilityPreflight.message)
+  }
 
   console.log('[CyborgPromotionBatch] Target loops:', targetLoops)
   console.log('[CyborgPromotionBatch] Max attempts:', maxAttempts)
@@ -98,20 +149,7 @@ async function main(): Promise<void> {
   while (successes < targetLoops && attempts < maxAttempts && Date.now() - startedAtMs < maxRuntimeMs) {
     attempts += 1
     console.log(`[CyborgPromotionBatch] Attempt ${attempts}/${maxAttempts} | successes ${successes}/${targetLoops}`)
-    const code = await runNodeScript(cyborgScript, {
-      ...process.env,
-      PUMPSWAP_META_OUTPUT_DIR: outputDir,
-      PUMPSWAP_CYBORG_CANARY_SIZE_SOL: canarySizeSol.toString(),
-      PUMPSWAP_CYBORG_CANARY_TIMEOUT_MS: attemptTimeoutMs.toString(),
-      PUMPSWAP_CYBORG_EXECUTION_DEFER_MS: process.env.PUMPSWAP_CYBORG_EXECUTION_DEFER_MS || '15000',
-      DARWIN_MODE: 'live',
-      LIVE_TRADE_SIZE_SOL: canarySizeSol.toString(),
-      LIVE_MIN_BALANCE_SOL: process.env.LIVE_MIN_BALANCE_SOL || '0.003',
-      DARWIN_LIVE_SIGNAL_MAX_AGE_MS: process.env.DARWIN_LIVE_SIGNAL_MAX_AGE_MS || '90000',
-      DARWIN_LIVE_ALLOW_ATA_CREATE: 'true',
-      DARWIN_LIVE_ALLOW_POOL_EXTEND: allowPoolExtend ? 'true' : 'false',
-      DARWIN_LIVE_CLOSE_TOKEN_ATA_ON_SELL: 'true',
-    })
+    const code = await runNodeScript(cyborgScript, canaryEnv)
 
     if (code === 0) {
       successes += 1

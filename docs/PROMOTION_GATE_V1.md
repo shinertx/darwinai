@@ -86,6 +86,8 @@ This runs sequential one-loop canaries in the foreground, stops on any unflatten
 
 `CYBORG_PROMOTION_STOP_ON_NON_POSITIVE_LOOP=true` stops the batch after the first completed loop that is not net-positive, then writes fail evidence instead of spending through more losing loops.
 
+Before spending the first loop, the batch runner also scans recent `cyborg-canary-*.json` evidence for the same cyborg strategy config and canary size. If that exact config and size already produced a non-positive, incomplete, or unflattened live loop, the runner refuses to start. `CYBORG_PROMOTION_ALLOW_KNOWN_UNPROFITABLE=true` is a diagnostic override only; it must not be used as promotion proof.
+
 Pool-extension promotion is quarantined. On 2026-06-05, `cyborg-lowcomp-min58-pool-extend` produced a confirmed buy, failed autonomous sell, unflattened token position, and `-0.007019400 SOL` net wallet delta. Promotion batches now refuse `DARWIN_LIVE_ALLOW_POOL_EXTEND=true` unless `CYBORG_PROMOTION_ALLOW_QUARANTINED_POOL_EXTEND=true` is set for a one-off diagnostic. That diagnostic path must not be treated as promotion-ready capital proof.
 
 ## Capital Rule
@@ -107,5 +109,6 @@ A `FAIL` record should be fed back into Darwin's Software 3.0 loop as context fo
 - failed signature verification means fix logging or RPC reconciliation
 - negative net SOL means rewrite strategy/exit logic
 - unclosed positions mean fix exit automation
+- known-unprofitable preflight failure means do not spend another identical tiny canary; rewrite the strategy/search loop or prove a new config offline first
 - restart evidence means fix process controls
 - manual rescue means the strategy did not autonomously prove itself

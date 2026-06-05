@@ -12,6 +12,7 @@ import {
   scoreCyborgShape,
   type CyborgShapeScore,
 } from '../observatory/cyborgShapeScoring'
+import { resolveCyborgStrategyConfig, type CyborgStrategyConfig } from '../observatory/cyborgStrategyConfig'
 import type { Genome, MarketSignal } from '../types'
 
 type CreatePoolEventLine = {
@@ -89,24 +90,7 @@ type CanaryResult = {
   shapeBlockers: string[]
   estimatedLaterBuyFlowRate: number | null
   estimatedThreePlusLaterBuyWalletRate: number | null
-  strategyConfig: {
-    scorer: {
-      minScore: number
-      maxBuyCompetitors5s: number
-      maxInteractingWallets5s: number
-      minLiquiditySol: number
-      requireUniqueCreator: boolean
-    }
-    alertWindowMs: number
-    executionDeferMs: number
-    liveSignalMaxAgeMs: string | null
-    allowedStateRentSetup: {
-      ataCreate: boolean
-      poolExtend: boolean
-      closeTokenAtaOnSell: boolean
-    }
-    settlementRoute: 'direct_rpc'
-  }
+  strategyConfig: CyborgStrategyConfig
 }
 
 const WSOL_MINT = 'So11111111111111111111111111111111111111112'
@@ -348,24 +332,7 @@ async function executeCanary(
     shapeBlockers: [...shapeScore.blockers],
     estimatedLaterBuyFlowRate: shapeScore.estimatedLaterBuyFlowRate,
     estimatedThreePlusLaterBuyWalletRate: shapeScore.estimatedThreePlusLaterBuyWalletRate,
-    strategyConfig: {
-      scorer: {
-        minScore: shapeConfig.minScore,
-        maxBuyCompetitors5s: shapeConfig.maxBuyCompetitors5s,
-        maxInteractingWallets5s: shapeConfig.maxInteractingWallets5s,
-        minLiquiditySol: shapeConfig.minLiquiditySol,
-        requireUniqueCreator: shapeConfig.requireUniqueCreator,
-      },
-      alertWindowMs,
-      executionDeferMs,
-      liveSignalMaxAgeMs: process.env.DARWIN_LIVE_SIGNAL_MAX_AGE_MS || null,
-      allowedStateRentSetup: {
-        ataCreate: ['true', '1', 'yes', 'on'].includes((process.env.DARWIN_LIVE_ALLOW_ATA_CREATE || '').toLowerCase()),
-        poolExtend: ['true', '1', 'yes', 'on'].includes((process.env.DARWIN_LIVE_ALLOW_POOL_EXTEND || '').toLowerCase()),
-        closeTokenAtaOnSell: ['true', '1', 'yes', 'on'].includes((process.env.DARWIN_LIVE_CLOSE_TOKEN_ATA_ON_SELL || '').toLowerCase()),
-      },
-      settlementRoute: 'direct_rpc',
-    },
+    strategyConfig: resolveCyborgStrategyConfig(process.env, shapeConfig, alertWindowMs, executionDeferMs),
   }
 
   const outPath = path.join(

@@ -1,0 +1,150 @@
+import crypto from 'crypto'
+import fs from 'fs'
+import path from 'path'
+import type { CyborgStrategyConfig } from '../observatory/cyborgStrategyConfig'
+
+type CyborgCanaryResultLite = {
+  executedAtMs?: number
+  sizeSol?: number
+  netReturnSol?: number
+  buySignature?: string | null
+  sellSignature?: string | null
+  flattened?: boolean
+  strategyConfig?: unknown
+}
+
+export type CyborgProfitabilityPreflightOptions = {
+  inputDir: string
+  canarySizeSol: number
+  strategyConfig: CyborgStrategyConfig
+  nowMs?: number
+  lookbackMs?: number
+  minObservedLoops?: number
+  allowKnownUnprofitable?: boolean
+}
+
+export type CyborgProfitabilityPreflightResult = {
+  allowed: boolean
+  reason: 'no_matching_evidence' | 'known_unprofitable' | 'override_known_unprofitable'
+  matchingEvidenceCount: number
+  blockingEvidenceCount: number
+  worstNetReturnSol: number | null
+  latestNetReturnSol: number | null
+  evidenceFiles: string[]
+  message: string
+}
+
+const DEFAULT_LOOKBACK_MS = 7 * 24 * 60 * 60 * 1000
+const DEFAULT_MIN_OBSERVED_LOOPS = 1
+const SIZE_EPSILON_SOL = 0.000000001
+
+function stableStringify(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value)
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`
+
+  const record = value as Record<string, unknown>
+  return `{${Object.keys(record)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${stableStringify(record[key])}`)
+    .join(',')}}`
+}
+
+function sha256(value: unknown): string {
+  return crypto.createHash('sha256').update(stableStringify(value)).digest('hex')
+}
+
+function readResult(filePath: string): CyborgCanaryResultLite | null {
+  try {
+    return JSON.parse(fs.readFileSync(filePath, 'utf8')) as CyborgCanaryResultLite
+  } catch {
+    return null
+  }
+}
+
+function resultFiles(inputDir: string): string[] {
+  if (!fs.existsSync(inputDir)) return []
+  return fs.readdirSync(inputDir)
+    .filter((name) => name.startsWith('cyborg-canary-') && name.endsWith('.json'))
+    .map((name) => path.join(inputDir, name))
+    .sort()
+}
+
+function isSameSize(result: CyborgCanaryResultLite, canarySizeSol: number): boolean {
+  return typeof result.sizeSol === 'number'
+    && Number.isFinite(result.sizeSol)
+    && Math.abs(result.sizeSol - canarySizeSol) <= SIZE_EPSILON_SOL
+}
+
+function isCompleteLoop(result: CyborgCanaryResultLite): boolean {
+  return Boolean(result.buySignature && result.sellSignature)
+}
+
+export function evaluateCyborgProfitabilityPreflight(
+  options: CyborgProfitabilityPreflightOptions
+): CyborgProfitabilityPreflightResult {
+  const nowMs = options.nowMs ?? Date.now()
+  const lookbackMs = options.lookbackMs ?? DEFAULT_LOOKBACK_MS
+  const minObservedLoops = options.minObservedLoops ?? DEFAULT_MIN_OBSERVED_LOOPS
+  const configHash = sha256(options.strategyConfig)
+  const sinceMs = nowMs - lookbackMs
+
+  const matching = resultFiles(options.inputDir)
+    .map((filePath) => ({ filePath, result: readResult(filePath) }))
+    .filter((entry): entry is { filePath: string; result: CyborgCanaryResultLite } => entry.result !== null)
+    .filter(({ result }) => typeof result.executedAtMs === 'number' && result.executedAtMs >= sinceMs)
+    .filter(({ result }) => isSameSize(result, options.canarySizeSol))
+    .filter(({ result }) => Boolean(result.strategyConfig) && sha256(result.strategyConfig) === configHash)
+    .sort((a, b) => (a.result.executedAtMs || 0) - (b.result.executedAtMs || 0))
+
+  const blocking = matching.filter(({ result }) => {
+    if (!isCompleteLoop(result)) return true
+    if (result.flattened !== true) return true
+    return typeof result.netReturnSol === 'number'
+      && Number.isFinite(result.netReturnSol)
+      && result.netReturnSol <= 0
+  })
+
+  const netReturns = matching
+    .map(({ result }) => result.netReturnSol)
+    .filter((value): value is number => typeof value === 'number' && Number.isFinite(value))
+  const latest = [...matching].reverse().find(({ result }) => typeof result.netReturnSol === 'number')
+  const evidenceFiles = blocking.map(({ filePath }) => filePath)
+  const blocked = blocking.length >= minObservedLoops
+
+  if (blocked && !options.allowKnownUnprofitable) {
+    return {
+      allowed: false,
+      reason: 'known_unprofitable',
+      matchingEvidenceCount: matching.length,
+      blockingEvidenceCount: blocking.length,
+      worstNetReturnSol: netReturns.length > 0 ? Math.min(...netReturns) : null,
+      latestNetReturnSol: latest?.result.netReturnSol ?? null,
+      evidenceFiles,
+      message: `Refusing promotion batch: this exact cyborg config and ${options.canarySizeSol} SOL size already produced ${blocking.length} non-positive, incomplete, or unflattened live loop(s). Rewrite or prove a new config in paper/offline analysis before spending another live canary.`,
+    }
+  }
+
+  if (blocked && options.allowKnownUnprofitable) {
+    return {
+      allowed: true,
+      reason: 'override_known_unprofitable',
+      matchingEvidenceCount: matching.length,
+      blockingEvidenceCount: blocking.length,
+      worstNetReturnSol: netReturns.length > 0 ? Math.min(...netReturns) : null,
+      latestNetReturnSol: latest?.result.netReturnSol ?? null,
+      evidenceFiles,
+      message: `Diagnostic override active: allowing a promotion batch despite ${blocking.length} known non-positive, incomplete, or unflattened live loop(s) for this exact config and size.`,
+    }
+  }
+
+  return {
+    allowed: true,
+    reason: 'no_matching_evidence',
+    matchingEvidenceCount: matching.length,
+    blockingEvidenceCount: blocking.length,
+    worstNetReturnSol: netReturns.length > 0 ? Math.min(...netReturns) : null,
+    latestNetReturnSol: latest?.result.netReturnSol ?? null,
+    evidenceFiles,
+    message: 'No matching known-unprofitable cyborg live evidence found for this config and size.',
+  }
+}
