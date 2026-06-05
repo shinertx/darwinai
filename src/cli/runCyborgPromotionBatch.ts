@@ -101,7 +101,7 @@ async function main(): Promise<void> {
       LIVE_TRADE_SIZE_SOL: canarySizeSol.toString(),
       LIVE_MIN_BALANCE_SOL: process.env.LIVE_MIN_BALANCE_SOL || '0.003',
       DARWIN_LIVE_ALLOW_ATA_CREATE: 'true',
-      DARWIN_LIVE_ALLOW_POOL_EXTEND: 'false',
+      DARWIN_LIVE_ALLOW_POOL_EXTEND: process.env.DARWIN_LIVE_ALLOW_POOL_EXTEND || 'false',
       DARWIN_LIVE_CLOSE_TOKEN_ATA_ON_SELL: 'true',
     })
 
