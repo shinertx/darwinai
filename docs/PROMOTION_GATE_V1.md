@@ -88,6 +88,16 @@ This runs sequential one-loop canaries in the foreground, stops on any unflatten
 
 Before spending the first loop, the batch runner also scans recent `cyborg-canary-*.json` evidence for the same cyborg strategy config and canary size. If that exact config and size already produced a non-positive, incomplete, or unflattened live loop, the runner refuses to start. `CYBORG_PROMOTION_ALLOW_KNOWN_UNPROFITABLE=true` is a diagnostic override only; it must not be used as promotion proof.
 
+When a config is blocked by known live loss evidence, run the offline break-even analyzer before proposing another live canary:
+
+```bash
+CYBORG_BREAKEVEN_SIZE_SOL=0.0001 \
+CYBORG_BREAKEVEN_EXPECTED_EDGE_PCT_LIST=1,5,10,25,50,100 \
+npm run analyze:cyborg:breakeven
+```
+
+The report writes to `data/promotion-gate/cyborg-break-even-*.json` and converts wallet-delta loss evidence into the gross edge required to break even at the current canary size. If the required gross edge is unrealistic, the next work is cohort/strategy rewrite in paper or historical analysis, not another live attempt.
+
 Pool-extension promotion is quarantined. On 2026-06-05, `cyborg-lowcomp-min58-pool-extend` produced a confirmed buy, failed autonomous sell, unflattened token position, and `-0.007019400 SOL` net wallet delta. Promotion batches now refuse `DARWIN_LIVE_ALLOW_POOL_EXTEND=true` unless `CYBORG_PROMOTION_ALLOW_QUARANTINED_POOL_EXTEND=true` is set for a one-off diagnostic. That diagnostic path must not be treated as promotion-ready capital proof.
 
 ## Capital Rule
