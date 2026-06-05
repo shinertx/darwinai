@@ -44,6 +44,18 @@ Promotion Gate v1 emits `PASS` only when all conditions are true:
 
 Any failed condition emits `FAIL`. A failed gate is not a partial promotion.
 
+## Command
+
+Run the gate from a built checkout:
+
+```bash
+PROMOTION_GATE_INPUT=data/promotion-gate/evidence.json \
+PROMOTION_GATE_VERIFY_ONCHAIN=true \
+npm run promotion:gate
+```
+
+The command writes a durable record under `data/promotion-gate/`. A `FAIL` exits non-zero and must block size increases.
+
 ## Capital Rule
 
 No code path, agent, or operator may increase live trade size from a strategy unless the latest promotion record for that same `strategyId` and `strategyHash` is `PASS`.
