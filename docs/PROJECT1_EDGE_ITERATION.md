@@ -353,3 +353,23 @@ Top cohort notes:
 - `strict_zero`: `9` pools, rent-free rate `0%`, three-plus later-wallet rate `66.7%`, reserve-growth proxy `30.13%`; blocked by no rent-free first-buyer evidence, sample size, no legitimate-pool evidence, and edge proxy below break-even.
 
 Interpretation: do not run another live canary from this cohort set. The next work is broader historical/paper search for a cohort whose modeled post-cost edge can plausibly clear the live loss floor.
+
+## 2026-06-05 Event-Derived Broad Snapshot
+
+Server report:
+
+- `data/meta-observer/event-cohort-study-2026-06-05T14-47-27-866Z.json`
+- Inputs: `events-2026-06-05T13-16-06-840Z.jsonl`, `events-2026-06-05T13-44-16-379Z.jsonl`, and both first-buyer rent audits generated from those windows.
+- Scope: `167` event-derived pools, `63` with rent-audit coverage.
+- Break-even requirement used: `2411.44%` gross-edge proxy.
+
+Result: no cohort is promotable.
+
+Top cohort notes:
+
+- `delayed_crowding`: `10` pools, rent-free rate `60.0%`, three-plus later-wallet rate `100%`, reserve-growth proxy `130.31%`; blocked by sample size, no legitimate-pool evidence, and edge proxy below break-even.
+- `low_buy_competition`: `33` pools, rent-free rate `93.9%`, three-plus later-wallet rate `93.9%`, reserve-growth proxy `123.58%`; blocked by no legitimate-pool evidence and edge proxy below break-even.
+- `crowded`: `26` pools, rent-free rate `88.5%`, three-plus later-wallet rate `100%`, reserve-growth proxy `51.89%`; blocked by no legitimate-pool evidence and edge proxy below break-even.
+- `strict_zero`: `25` pools, rent-free rate `0%`, three-plus later-wallet rate `88.0%`, reserve-growth proxy `40.56%`; blocked by no rent-free first-buyer evidence, no legitimate-pool evidence, and edge proxy below break-even.
+
+Interpretation: broader flow confirms there is follow-on demand, but not enough modeled edge at the current tiny live cost floor. The next strategy rewrite should focus on reducing fixed execution cost, using pre-existing state/account paths, or finding a much stronger entry/exit model before any live canary.
