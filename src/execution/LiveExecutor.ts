@@ -15,6 +15,7 @@ import {
   pumpPoolAuthorityPda, poolPda, CANONICAL_POOL_INDEX,
 } from '@pump-fun/pump-swap-sdk'
 import {
+  createCloseAccountInstruction,
   getAssociatedTokenAddressSync,
   TOKEN_2022_PROGRAM_ID,
   TOKEN_PROGRAM_ID,
@@ -748,6 +749,18 @@ export class LiveExecutor {
       if (!ixs || ixs.length === 0) {
         console.log('[Live] No sell ixs:', position.mint.slice(0, 8))
         return null
+      }
+      if (parseBooleanFlag(process.env.DARWIN_LIVE_CLOSE_TOKEN_ATA_ON_SELL) && onChainTokens > 0n && amount >= onChainTokens) {
+        const tokenProgramId = await this.resolveMintTokenProgramId(mintPk)
+        ixs.push(
+          createCloseAccountInstruction(
+            tokenAta,
+            user,
+            user,
+            undefined,
+            tokenProgramId,
+          ),
+        )
       }
 
       const signature = await this.buildAndSend(ixs, {

@@ -81,6 +81,12 @@ async function main(): Promise<void> {
   const expectedSizeSol = process.env.PROMOTION_EXPECT_SIZE_SOL
     ? Number.parseFloat(process.env.PROMOTION_EXPECT_SIZE_SOL)
     : null
+  const sinceMs = process.env.CYBORG_PROMOTION_SINCE_MS
+    ? Number.parseInt(process.env.CYBORG_PROMOTION_SINCE_MS, 10)
+    : null
+  const untilMs = process.env.CYBORG_PROMOTION_UNTIL_MS
+    ? Number.parseInt(process.env.CYBORG_PROMOTION_UNTIL_MS, 10)
+    : null
   fs.mkdirSync(outputDir, { recursive: true })
 
   const files = findResultFiles(inputDir)
@@ -94,6 +100,8 @@ async function main(): Promise<void> {
       if (expectedSizeSol === null) return true
       return Math.abs(result.sizeSol - expectedSizeSol) < 0.000000001
     })
+    .filter(({ result }) => sinceMs === null || result.executedAtMs >= sinceMs)
+    .filter(({ result }) => untilMs === null || result.executedAtMs <= untilMs)
     .filter(({ result }) => result.buySignature && result.sellSignature)
     .sort((a, b) => a.result.executedAtMs - b.result.executedAtMs)
     .slice(-requiredLoops)

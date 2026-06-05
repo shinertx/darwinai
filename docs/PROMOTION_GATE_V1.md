@@ -66,6 +66,19 @@ npm run promotion:gate
 
 The command writes a durable record under `data/promotion-gate/`. A `FAIL` exits non-zero and must block size increases.
 
+To run the full foreground batch loop, after the non-trading PumpSwap meta observer is collecting `events-*.jsonl`:
+
+```bash
+CYBORG_PROMOTION_TARGET_LOOPS=20 \
+CYBORG_PROMOTION_MAX_ATTEMPTS=100 \
+PUMPSWAP_CYBORG_CANARY_SIZE_SOL=0.0001 \
+PUMPSWAP_CYBORG_CANARY_TIMEOUT_MS=1200000 \
+DARWIN_LIVE_CLOSE_TOKEN_ATA_ON_SELL=true \
+npm run promotion:batch:cyborg
+```
+
+This runs sequential one-loop canaries in the foreground, stops on any unflattened position, builds promotion evidence for only that batch window, then runs Promotion Gate v1. It does not start `darwin-live` or increase trade size.
+
 ## Capital Rule
 
 No code path, agent, or operator may increase live trade size from a strategy unless the latest promotion record for that same `strategyId` and `strategyHash` is `PASS`.
