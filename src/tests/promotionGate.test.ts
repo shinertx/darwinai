@@ -26,6 +26,7 @@ function buildEvidence(overrides: Partial<PromotionGateEvidence> = {}): Promotio
     startedAtMs: 1_000,
     endedAtMs: 2_000,
     loops,
+    failedAttemptWalletDeltaSol: 0,
     uncontrolledRestartEvidence: false,
     openTestPositions: [],
     ...overrides,
@@ -55,6 +56,13 @@ test('promotion gate rejects negative net wallet delta', () => {
       sellWalletDeltaSol: 0.0001,
     })),
   })
+  const record = evaluatePromotionGate(evidence)
+  assert.equal(record.status, 'FAIL')
+  assert.ok(record.failures.includes('net_wallet_delta_not_positive'))
+})
+
+test('promotion gate includes failed attempt cost in net wallet delta', () => {
+  const evidence = buildEvidence({ failedAttemptWalletDeltaSol: -0.00025 })
   const record = evaluatePromotionGate(evidence)
   assert.equal(record.status, 'FAIL')
   assert.ok(record.failures.includes('net_wallet_delta_not_positive'))

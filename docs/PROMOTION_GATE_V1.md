@@ -46,7 +46,17 @@ Any failed condition emits `FAIL`. A failed gate is not a partial promotion.
 
 ## Command
 
-Run the gate from a built checkout:
+Build promotion evidence from autonomous cyborg canary result files:
+
+```bash
+CYBORG_PROMOTION_INPUT_DIR=data/meta-observer \
+PROMOTION_GATE_MIN_LOOPS=20 \
+PROMOTION_FAILED_ATTEMPT_WALLET_DELTA_SOL=0 \
+PROMOTION_OPEN_TEST_POSITIONS= \
+npm run promotion:evidence:cyborg
+```
+
+Then run the gate from the generated evidence file:
 
 ```bash
 PROMOTION_GATE_INPUT=data/promotion-gate/evidence.json \

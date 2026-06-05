@@ -25,6 +25,7 @@ export type PromotionGateEvidence = {
   startedAtMs: number
   endedAtMs: number
   loops: PromotionLoopEvidence[]
+  failedAttemptWalletDeltaSol?: number | string
   uncontrolledRestartEvidence?: boolean
   openTestPositions?: string[]
 }
@@ -108,7 +109,14 @@ export function evaluatePromotionGate(
   if (evidence.uncontrolledRestartEvidence) failures.push('uncontrolled_restart_evidence')
   if ((evidence.openTestPositions || []).length > 0) failures.push('open_test_positions')
 
-  let netWalletDeltaSol = 0
+  const failedAttemptWalletDeltaSol = evidence.failedAttemptWalletDeltaSol === undefined
+    ? 0
+    : asFiniteNumber(evidence.failedAttemptWalletDeltaSol)
+  if (failedAttemptWalletDeltaSol === null) {
+    failures.push('invalid_failed_attempt_wallet_delta')
+  }
+
+  let netWalletDeltaSol = failedAttemptWalletDeltaSol ?? 0
   const seenBuySignatures = new Set<string>()
   const seenSellSignatures = new Set<string>()
 
