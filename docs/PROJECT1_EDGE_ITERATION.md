@@ -327,3 +327,21 @@ Project 1 is only considered "advanced" when all are true:
 - Project 1 still has the strongest historical Solana-specific signal in this workspace.
 - That signal is not yet validated as realized live profit.
 - The next gain is likely to come from better cohort discovery, not from arguing about the original strict-zero framing.
+
+## 2026-06-05 Break-Even-Aware Snapshot
+
+Server report:
+
+- `data/meta-observer/alt-edge-study-2026-06-05T14-42-10-977Z.json`
+- Inputs: `pools-2026-06-05T13-16-06-840Z.jsonl`, `events-2026-06-05T13-16-06-840Z.jsonl`, `first-buyer-rent-audit-2026-06-05T14-37-06-737Z.json`
+- Break-even requirement used: `2411.44%` gross-edge proxy, from the cleaner no-pool-extension `0.0001 SOL` live loss floor.
+
+Result: no cohort is promotable.
+
+Top cohort notes:
+
+- `delayed_crowding`: `4` pools, rent-free rate `100%`, three-plus later-wallet rate `100%`, reserve-growth proxy `189.09%`; blocked by sample size, no legitimate-pool evidence, and edge proxy below break-even.
+- `low_buy_competition`: `6` pools, rent-free rate `100%`, three-plus later-wallet rate `66.7%`, reserve-growth proxy `86.03%`; blocked by sample size, no legitimate-pool evidence, and edge proxy below break-even.
+- `strict_zero`: `9` pools, rent-free rate `0%`, three-plus later-wallet rate `66.7%`, reserve-growth proxy `30.13%`; blocked by no rent-free first-buyer evidence, sample size, no legitimate-pool evidence, and edge proxy below break-even.
+
+Interpretation: do not run another live canary from this cohort set. The next work is broader historical/paper search for a cohort whose modeled post-cost edge can plausibly clear the live loss floor.
