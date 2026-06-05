@@ -219,7 +219,10 @@ async function main() {
   const pools = readJsonOrJsonl(poolsFile)
   const rentAudit = readJsonOrJsonl(rentAuditFile)
   const poolById = new Map(pools.map((pool) => [pool.pool, pool]))
-  const rentByPool = new Map((Array.isArray(rentAudit) ? rentAudit : rentAudit.rows || []).map((row) => [row.pool, row]))
+  const rentRows = Array.isArray(rentAudit)
+    ? rentAudit
+    : rentAudit.analyzed || rentAudit.rows || []
+  const rentByPool = new Map(rentRows.map((row) => [row.pool, row]))
   const creatorCounts = new Map()
   for (const pool of pools) {
     creatorCounts.set(pool.creatorSigner, (creatorCounts.get(pool.creatorSigner) || 0) + 1)
