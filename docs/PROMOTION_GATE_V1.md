@@ -75,11 +75,14 @@ CYBORG_PROMOTION_TARGET_LOOPS=20 \
 CYBORG_PROMOTION_MAX_ATTEMPTS=100 \
 PUMPSWAP_CYBORG_CANARY_SIZE_SOL=0.0001 \
 PUMPSWAP_CYBORG_CANARY_TIMEOUT_MS=1200000 \
+CYBORG_PROMOTION_STOP_ON_NON_POSITIVE_LOOP=true \
 DARWIN_LIVE_CLOSE_TOKEN_ATA_ON_SELL=true \
 npm run promotion:batch:cyborg
 ```
 
 This runs sequential one-loop canaries in the foreground, stops on any unflattened position, builds promotion evidence for only that batch window, then runs Promotion Gate v1. It does not start `darwin-live` or increase trade size.
+
+`CYBORG_PROMOTION_STOP_ON_NON_POSITIVE_LOOP=true` stops the batch after the first completed loop that is not net-positive, then writes fail evidence instead of spending through more losing loops.
 
 ## Capital Rule
 

@@ -13,6 +13,14 @@ function parsePositiveFloat(value: string | undefined, fallback: number): number
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
 }
 
+function parseBool(value: string | undefined, fallback = false): boolean {
+  if (!value) return fallback
+  const normalized = value.trim().toLowerCase()
+  if (['true', '1', 'yes', 'on'].includes(normalized)) return true
+  if (['false', '0', 'no', 'off'].includes(normalized)) return false
+  return fallback
+}
+
 function runNodeScript(scriptPath: string, env: NodeJS.ProcessEnv): Promise<number> {
   return new Promise((resolve) => {
     const child = spawn(process.execPath, [scriptPath], {
@@ -33,6 +41,18 @@ function latestFile(dir: string, prefix: string): string | null {
   return files[0] || null
 }
 
+function latestBatchResult(outputDir: string, startedAtMs: number): { netReturnSol: number; filePath: string } | null {
+  const latest = latestFile(outputDir, 'cyborg-canary-')
+  if (!latest) return null
+  const parsed = JSON.parse(fs.readFileSync(latest, 'utf8')) as {
+    executedAtMs?: number
+    netReturnSol?: number
+  }
+  if (!parsed.executedAtMs || parsed.executedAtMs < startedAtMs) return null
+  if (typeof parsed.netReturnSol !== 'number' || !Number.isFinite(parsed.netReturnSol)) return null
+  return { netReturnSol: parsed.netReturnSol, filePath: latest }
+}
+
 async function main(): Promise<void> {
   dotenv.config()
   try {
@@ -44,6 +64,7 @@ async function main(): Promise<void> {
   const maxRuntimeMs = parsePositiveInt(process.env.CYBORG_PROMOTION_MAX_RUNTIME_MS, 24 * 60 * 60 * 1000)
   const attemptTimeoutMs = parsePositiveInt(process.env.PUMPSWAP_CYBORG_CANARY_TIMEOUT_MS, 20 * 60 * 1000)
   const canarySizeSol = parsePositiveFloat(process.env.PUMPSWAP_CYBORG_CANARY_SIZE_SOL, 0.0001)
+  const stopOnNonPositiveLoop = parseBool(process.env.CYBORG_PROMOTION_STOP_ON_NON_POSITIVE_LOOP, false)
   const outputDir = path.resolve(process.cwd(), process.env.PUMPSWAP_META_OUTPUT_DIR || 'data/meta-observer')
   const promotionDir = path.resolve(process.cwd(), process.env.PROMOTION_GATE_OUTPUT_DIR || 'data/promotion-gate')
   const startedAtMs = Date.now()
@@ -61,6 +82,7 @@ async function main(): Promise<void> {
   console.log('[CyborgPromotionBatch] Target loops:', targetLoops)
   console.log('[CyborgPromotionBatch] Max attempts:', maxAttempts)
   console.log('[CyborgPromotionBatch] Canary size SOL:', canarySizeSol.toFixed(6))
+  console.log('[CyborgPromotionBatch] Stop on non-positive loop:', stopOnNonPositiveLoop)
   console.log('[CyborgPromotionBatch] Started at:', new Date(startedAtMs).toISOString())
 
   let successes = 0
@@ -85,6 +107,23 @@ async function main(): Promise<void> {
 
     if (code === 0) {
       successes += 1
+      const latestResult = latestBatchResult(outputDir, startedAtMs)
+      if (!latestResult) {
+        stopReason = 'missing_success_result'
+        console.log('[CyborgPromotionBatch] Stopping because a successful canary did not write a result file.')
+        break
+      }
+      console.log(
+        '[CyborgPromotionBatch] Latest loop net SOL:',
+        latestResult.netReturnSol.toFixed(9),
+        '| result:',
+        latestResult.filePath
+      )
+      if (stopOnNonPositiveLoop && latestResult.netReturnSol <= 0) {
+        stopReason = 'non_positive_loop_net'
+        console.log('[CyborgPromotionBatch] Stopping because the latest completed loop was not net-positive.')
+        break
+      }
       continue
     }
 
