@@ -11,6 +11,9 @@ try {
 const WSOL_MINT = 'So11111111111111111111111111111111111111112'
 const OUTPUT_DIR = path.resolve(process.cwd(), process.env.PUMPSWAP_META_OUTPUT_DIR || 'data/meta-observer')
 const FOLLOW_ON_WINDOW_MS = Number.parseInt(process.env.PUMPSWAP_ALT_EDGE_FOLLOW_ON_WINDOW_MS || '300000', 10) || 300000
+const REQUIRED_GROSS_EDGE_PCT = parseOptionalPositiveFloat(process.env.PUMPSWAP_ALT_EDGE_REQUIRED_GROSS_EDGE_PCT)
+const MIN_PROMOTION_SAMPLE_POOLS = Number.parseInt(process.env.PUMPSWAP_ALT_EDGE_MIN_PROMOTION_SAMPLE_POOLS || '20', 10) || 20
+const REQUIRE_LEGITIMATE_FOR_PROMOTION = parseBool(process.env.PUMPSWAP_ALT_EDGE_REQUIRE_LEGITIMATE_FOR_PROMOTION, true)
 const WINDOW_5S_MS = 5_000
 const WINDOW_10S_MS = 10_000
 
@@ -53,6 +56,20 @@ function resolveLatestMatchedFile(outputDir, prefix) {
     })
     .sort()
   return candidates.at(-1) || null
+}
+
+function parseOptionalPositiveFloat(value) {
+  if (!value) return null
+  const parsed = Number.parseFloat(value)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : null
+}
+
+function parseBool(value, fallback) {
+  if (!value) return fallback
+  const normalized = value.trim().toLowerCase()
+  if (['true', '1', 'yes', 'on'].includes(normalized)) return true
+  if (['false', '0', 'no', 'off'].includes(normalized)) return false
+  return fallback
 }
 
 function readJsonOrJsonl(filePath) {
@@ -200,6 +217,28 @@ function summarizeGroup(pools, followOnByPool, rentByPool, creatorCounts, extraF
   const rentFreeHits = rows.filter((pool) => rentAuditTradable(rentByPool.get(pool.pool)))
   const legitimateHits = rows.filter((pool) => pool.legitimatePool === true)
   const creatorUniqueHits = rows.filter((pool) => (creatorCounts.get(pool.creatorSigner) || 0) === 1)
+  const avgReserveDeltaSol = average(rows.map((pool) => followOnByPool.get(pool.pool)?.reserveDeltaSol))
+  const medianLiquiditySol = median(rows.map((pool) => liquiditySol(pool)))
+  const reserveDeltaPctOfMedianLiquidity = avgReserveDeltaSol !== null && medianLiquiditySol !== null && medianLiquiditySol > 0
+    ? (avgReserveDeltaSol / medianLiquiditySol) * 100
+    : null
+  const promotionBlockers = []
+  if (rows.length < MIN_PROMOTION_SAMPLE_POOLS) {
+    promotionBlockers.push(`sample_pools<${MIN_PROMOTION_SAMPLE_POOLS}`)
+  }
+  if (rentFreeHits.length === 0) {
+    promotionBlockers.push('no_rent_free_first_buyer_evidence')
+  }
+  if (REQUIRE_LEGITIMATE_FOR_PROMOTION && legitimateHits.length === 0) {
+    promotionBlockers.push('no_legitimate_pool_evidence')
+  }
+  if (REQUIRED_GROSS_EDGE_PCT !== null) {
+    if (reserveDeltaPctOfMedianLiquidity === null) {
+      promotionBlockers.push('missing_reserve_delta_edge_proxy')
+    } else if (reserveDeltaPctOfMedianLiquidity < REQUIRED_GROSS_EDGE_PCT) {
+      promotionBlockers.push(`reserve_delta_proxy_below_required_gross_edge:${reserveDeltaPctOfMedianLiquidity.toFixed(2)}<${REQUIRED_GROSS_EDGE_PCT.toFixed(2)}`)
+    }
+  }
 
   return {
     pools: rows.length,
@@ -210,8 +249,12 @@ function summarizeGroup(pools, followOnByPool, rentByPool, creatorCounts, extraF
     threePlusLaterBuyWalletRate: ratio(threePlusHits.length, rows.length),
     avgLaterBuyWallets: average(rows.map((pool) => followOnByPool.get(pool.pool)?.laterBuyWallets.size || 0)),
     medianLaterBuyWallets: median(rows.map((pool) => followOnByPool.get(pool.pool)?.laterBuyWallets.size || 0)),
-    avgReserveDeltaSol: average(rows.map((pool) => followOnByPool.get(pool.pool)?.reserveDeltaSol)),
-    medianLiquiditySol: median(rows.map((pool) => liquiditySol(pool))),
+    avgReserveDeltaSol,
+    medianLiquiditySol,
+    reserveDeltaPctOfMedianLiquidity,
+    requiredGrossEdgePct: REQUIRED_GROSS_EDGE_PCT,
+    promotionStatus: promotionBlockers.length === 0 ? 'PAPER_CANDIDATE' : 'BLOCKED',
+    promotionBlockers,
   }
 }
 
@@ -292,6 +335,9 @@ async function main() {
       followOnWindowMs: FOLLOW_ON_WINDOW_MS,
       window5sMs: WINDOW_5S_MS,
       window10sMs: WINDOW_10S_MS,
+      requiredGrossEdgePct: REQUIRED_GROSS_EDGE_PCT,
+      minPromotionSamplePools: MIN_PROMOTION_SAMPLE_POOLS,
+      requireLegitimateForPromotion: REQUIRE_LEGITIMATE_FOR_PROMOTION,
     },
     totals: {
       pools: pools.length,

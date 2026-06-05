@@ -172,6 +172,16 @@ cd /Users/benjijmac/Documents/Playground/darwinai
 npm run analyze:pumpswap:alt-edges
 ```
 
+After any live cyborg loss-floor report, run the same analyzer with the current break-even requirement before considering another live canary:
+
+```bash
+PUMPSWAP_ALT_EDGE_REQUIRED_GROSS_EDGE_PCT=2411.44 \
+PUMPSWAP_ALT_EDGE_REQUIRE_LEGITIMATE_FOR_PROMOTION=true \
+npm run analyze:pumpswap:alt-edges
+```
+
+This only produces offline promotion context. A cohort marked `PAPER_CANDIDATE` is still not live promotion proof; it only earns deeper paper/historical testing before a tiny canary.
+
 That script requires local PumpSwap observer outputs such as:
 
 - `pools-*.json`
