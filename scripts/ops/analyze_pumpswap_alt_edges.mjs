@@ -85,6 +85,14 @@ function ratio(numerator, denominator) {
   return numerator / denominator
 }
 
+function rentAuditTradable(row) {
+  if (!row) return false
+  if (row.tradable === true) return true
+  return row.transactionFound === true
+    && row.hasPoolExtend === false
+    && row.hasAtaCreate === false
+}
+
 function determineAltProfile(pool) {
   const nonCreator5s = pool.competitionInstructionCountsNonCreator5s || {}
   const buys5s = Number(nonCreator5s.buy || 0)
@@ -189,7 +197,7 @@ function summarizeGroup(pools, followOnByPool, rentByPool, creatorCounts, extraF
   const rows = pools.filter(extraFilter)
   const laterFlowHits = rows.filter((pool) => (followOnByPool.get(pool.pool)?.laterBuyWallets.size || 0) > 0)
   const threePlusHits = rows.filter((pool) => (followOnByPool.get(pool.pool)?.laterBuyWallets.size || 0) >= 3)
-  const rentFreeHits = rows.filter((pool) => rentByPool.get(pool.pool)?.tradable === true)
+  const rentFreeHits = rows.filter((pool) => rentAuditTradable(rentByPool.get(pool.pool)))
   const legitimateHits = rows.filter((pool) => pool.legitimatePool === true)
   const creatorUniqueHits = rows.filter((pool) => (creatorCounts.get(pool.creatorSigner) || 0) === 1)
 
@@ -233,7 +241,7 @@ async function main() {
       creatorCounts,
       (pool) =>
         determineAltProfile(pool) === 'strict_zero' &&
-        rentByPool.get(pool.pool)?.tradable === true &&
+        rentAuditTradable(rentByPool.get(pool.pool)) &&
         pool.legitimatePool === true &&
         (creatorCounts.get(pool.creatorSigner) || 0) === 1
     ),
@@ -244,7 +252,7 @@ async function main() {
       creatorCounts,
       (pool) =>
         determineAltProfile(pool) === 'sell_only_probe' &&
-        rentByPool.get(pool.pool)?.tradable === true &&
+        rentAuditTradable(rentByPool.get(pool.pool)) &&
         pool.legitimatePool === true &&
         (creatorCounts.get(pool.creatorSigner) || 0) === 1
     ),
@@ -255,7 +263,7 @@ async function main() {
       creatorCounts,
       (pool) =>
         determineAltProfile(pool) === 'one_buy_probe' &&
-        rentByPool.get(pool.pool)?.tradable === true &&
+        rentAuditTradable(rentByPool.get(pool.pool)) &&
         pool.legitimatePool === true &&
         (creatorCounts.get(pool.creatorSigner) || 0) === 1
     ),
@@ -266,7 +274,7 @@ async function main() {
       creatorCounts,
       (pool) =>
         determineAltProfile(pool) === 'delayed_crowding' &&
-        rentByPool.get(pool.pool)?.tradable === true &&
+        rentAuditTradable(rentByPool.get(pool.pool)) &&
         pool.legitimatePool === true &&
         (creatorCounts.get(pool.creatorSigner) || 0) === 1
     ),
