@@ -12,6 +12,7 @@ Evidence:
 
 - Result: `data/meta-observer/cyborg-canary-2026-06-05T14-06-20-077Z.json`
 - Gate record: `data/promotion-gate/promotion-gate-fail-2026-06-05T14-09-10-453Z.json`
+- Break-even: at `0.0001 SOL`, this loss floor requires about `7019.40%` gross edge to break even before profit.
 - Manual cleanup: `data/live-canary/close-canary-2026-06-05T14-08-31-830Z.json`
 
 Rule: Do not run pool-extension as a promotion strategy. A one-off diagnostic may use `CYBORG_PROMOTION_ALLOW_QUARANTINED_POOL_EXTEND=true`, but that path cannot count toward Promotion Gate success.
@@ -26,5 +27,6 @@ Evidence:
 
 - Result: `data/meta-observer/cyborg-canary-2026-06-05T14-18-27-556Z.json`
 - Gate record: `data/promotion-gate/promotion-gate-fail-2026-06-05T14-18-28-596Z.json`
+- Break-even: at `0.0001 SOL`, this loss floor requires about `2411.44%` gross edge to break even before profit.
 
 Rule: Do not spend another promotion batch on the same cyborg config and `0.0001 SOL` size. The batch runner's profitability preflight must block this exact config/size unless `CYBORG_PROMOTION_ALLOW_KNOWN_UNPROFITABLE=true` is set for a one-off diagnostic. A diagnostic override cannot count toward Promotion Gate success.
