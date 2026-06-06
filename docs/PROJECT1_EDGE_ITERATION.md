@@ -196,6 +196,18 @@ That script requires local PumpSwap observer outputs such as:
 - `events-*.jsonl`
 - `first-buyer-rent-audit-*.json`
 
+Before any new live cyborg canary, run the replay-path analyzer against the same observer window with the current fixed live cost floor:
+
+```bash
+PUMPSWAP_REPLAY_FIXED_COST_SOL=0.00241144 \
+PUMPSWAP_REPLAY_TRADE_SIZE_SOL=0.0001 \
+PUMPSWAP_REPLAY_ENTRY_DELAY_MS=15000 \
+PUMPSWAP_REPLAY_EXIT_AFTER_LATER_BUYS=3 \
+npm run analyze:pumpswap:replay-paths
+```
+
+This estimates entry price, exit price, gross return, and modeled net return from observed reserve snapshots. A replay cohort marked `PAPER_CANDIDATE` is still not promotion proof; it only means the cohort may deserve deeper paper testing. A replay cohort marked `BLOCKED` must not be used for a paid live canary.
+
 ## System Architecture
 
 ### Layer 1: Collection
