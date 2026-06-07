@@ -224,41 +224,49 @@ function rentAuditTradable(row: PumpSwapReplayRentAuditRow | undefined): boolean
   return row.transactionFound === true && row.hasPoolExtend === false && row.hasAtaCreate === false
 }
 
-function collectPools(rows: PumpSwapReplayEvent[]): Map<string, PoolState> {
-  const pools = new Map<string, PoolState>()
-  for (const row of rows) {
-    if (row.kind === 'create_pool') {
-      const pool = createPoolState(row)
-      if (pool) pools.set(pool.pool, pool)
-      continue
-    }
-
-    const pool = row.pool ? pools.get(row.pool) : undefined
-    if (!pool || row.resolvedTimeMs === null || row.resolvedTimeMs === undefined) continue
-    if (row.resolvedTimeMs < pool.anchorTimeMs) continue
-
-    const user = row.user || null
-    const isCreator = user !== null && user === pool.creatorSigner
-    const ageMs = row.resolvedTimeMs - pool.anchorTimeMs
-    if (ageMs <= WINDOW_5S_MS && user && !isCreator) {
-      pool.interactingWallets5s.add(user)
-      addInstructionCount(pool.instructionCounts5s, row.kind)
-      if (row.kind === 'buy') pool.buyCompetitorWallets5s.add(user)
-    }
-    if (ageMs <= WINDOW_10S_MS && user && !isCreator && row.kind === 'buy') {
-      pool.buyCompetitorWallets10s.add(user)
-    }
-
-    pool.snapshots.push({
-      timeMs: row.resolvedTimeMs,
-      kind: row.kind,
-      user,
-      priceSolPerToken: priceSolPerToken(pool, row.poolBaseReserveRaw, row.poolQuoteReserveRaw),
-    })
+function ingestReplayEvent(pools: Map<string, PoolState>, row: PumpSwapReplayEvent): void {
+  if (row.kind === 'create_pool') {
+    const pool = createPoolState(row)
+    if (pool) pools.set(pool.pool, pool)
+    return
   }
+
+  const pool = row.pool ? pools.get(row.pool) : undefined
+  if (!pool || row.resolvedTimeMs === null || row.resolvedTimeMs === undefined) return
+  if (row.resolvedTimeMs < pool.anchorTimeMs) return
+
+  const user = row.user || null
+  const isCreator = user !== null && user === pool.creatorSigner
+  const ageMs = row.resolvedTimeMs - pool.anchorTimeMs
+  if (ageMs <= WINDOW_5S_MS && user && !isCreator) {
+    pool.interactingWallets5s.add(user)
+    addInstructionCount(pool.instructionCounts5s, row.kind)
+    if (row.kind === 'buy') pool.buyCompetitorWallets5s.add(user)
+  }
+  if (ageMs <= WINDOW_10S_MS && user && !isCreator && row.kind === 'buy') {
+    pool.buyCompetitorWallets10s.add(user)
+  }
+
+  pool.snapshots.push({
+    timeMs: row.resolvedTimeMs,
+    kind: row.kind,
+    user,
+    priceSolPerToken: priceSolPerToken(pool, row.poolBaseReserveRaw, row.poolQuoteReserveRaw),
+  })
+}
+
+function preparePools(pools: Map<string, PoolState>): void {
   for (const pool of pools.values()) {
     pool.snapshots.sort((a, b) => a.timeMs - b.timeMs)
   }
+}
+
+function collectPools(rows: PumpSwapReplayEvent[]): Map<string, PoolState> {
+  const pools = new Map<string, PoolState>()
+  for (const row of rows) {
+    ingestReplayEvent(pools, row)
+  }
+  preparePools(pools)
   return pools
 }
 
@@ -377,12 +385,12 @@ function summarizeProfile(
   }
 }
 
-export function analyzePumpswapReplayPaths(
-  events: PumpSwapReplayEvent[],
+function reportFromPools(
+  pools: Map<string, PoolState>,
   rentAuditRows: PumpSwapReplayRentAuditRow[],
   options: PumpswapReplayOptions
 ): PumpswapReplayReport {
-  const pools = collectPools(events)
+  preparePools(pools)
   const rentByPool = new Map<string, PumpSwapReplayRentAuditRow>()
   for (const row of rentAuditRows) {
     if (row.pool) rentByPool.set(row.pool, row)
@@ -406,5 +414,27 @@ export function analyzePumpswapReplayPaths(
     },
     byProfile,
     paths,
+  }
+}
+
+export function analyzePumpswapReplayPaths(
+  events: PumpSwapReplayEvent[],
+  rentAuditRows: PumpSwapReplayRentAuditRow[],
+  options: PumpswapReplayOptions
+): PumpswapReplayReport {
+  return reportFromPools(collectPools(events), rentAuditRows, options)
+}
+
+export function createPumpswapReplayPathCollector(): {
+  ingestEvent: (row: PumpSwapReplayEvent) => void
+  report: (
+    rentAuditRows: PumpSwapReplayRentAuditRow[],
+    options: PumpswapReplayOptions
+  ) => PumpswapReplayReport
+} {
+  const pools = new Map<string, PoolState>()
+  return {
+    ingestEvent: (row) => ingestReplayEvent(pools, row),
+    report: (rentAuditRows, options) => reportFromPools(pools, rentAuditRows, options),
   }
 }

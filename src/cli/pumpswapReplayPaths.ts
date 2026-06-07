@@ -3,7 +3,7 @@ import path from 'path'
 import readline from 'readline'
 import dotenv from 'dotenv'
 import {
-  analyzePumpswapReplayPaths,
+  createPumpswapReplayPathCollector,
   type PumpSwapReplayEvent,
   type PumpSwapReplayRentAuditRow,
 } from '../analysis/PumpswapReplayPath'
@@ -46,8 +46,10 @@ function resolveInputFiles(envName: string, prefix: string, suffix: string): str
     .sort()
 }
 
-async function readJsonlFiles<T>(filePaths: string[]): Promise<T[]> {
-  const rows: T[] = []
+async function ingestJsonlFiles(
+  filePaths: string[],
+  ingest: (row: PumpSwapReplayEvent) => void
+): Promise<void> {
   for (const filePath of filePaths) {
     const rl = readline.createInterface({
       input: fs.createReadStream(filePath, { encoding: 'utf8' }),
@@ -56,13 +58,12 @@ async function readJsonlFiles<T>(filePaths: string[]): Promise<T[]> {
     for await (const line of rl) {
       if (!line) continue
       try {
-        rows.push(JSON.parse(line) as T)
+        ingest(JSON.parse(line) as PumpSwapReplayEvent)
       } catch {
         // Keep analysis moving over partially written observer files.
       }
     }
   }
-  return rows
 }
 
 function readRentAuditFiles(filePaths: string[]): PumpSwapReplayRentAuditRow[] {
@@ -91,9 +92,10 @@ async function main(): Promise<void> {
   const rentAuditFiles = resolveInputFiles('PUMPSWAP_REPLAY_RENT_AUDIT_PATHS', 'first-buyer-rent-audit-', '.json')
   if (!eventFiles.length) throw new Error('No non-empty events files found')
 
-  const events = await readJsonlFiles<PumpSwapReplayEvent>(eventFiles)
+  const collector = createPumpswapReplayPathCollector()
+  await ingestJsonlFiles(eventFiles, collector.ingestEvent)
   const rentAuditRows = readRentAuditFiles(rentAuditFiles)
-  const report = analyzePumpswapReplayPaths(events, rentAuditRows, {
+  const report = collector.report(rentAuditRows, {
     entryDelayMs: parsePositiveInt(process.env.PUMPSWAP_REPLAY_ENTRY_DELAY_MS, 15_000),
     maxHoldMs: parsePositiveInt(process.env.PUMPSWAP_REPLAY_MAX_HOLD_MS, 300_000),
     exitAfterLaterBuys: parsePositiveInt(process.env.PUMPSWAP_REPLAY_EXIT_AFTER_LATER_BUYS, 3),
