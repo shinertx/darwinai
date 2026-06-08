@@ -1078,6 +1078,41 @@ Code fix:
 
 Interpretation: the fresh offline refresh did not promote the target. Live remains locked. The current blocker is still sample depth, not model edge on the tiny target.
 
+### Replay Frontier and Target Mutation
+
+Code change:
+
+- Added `npm run analyze:pumpswap:replay-frontier`.
+- The replay frontier classifies replay rows as `PAPER_CANDIDATE`, `COLLECT_MORE`, `MUTATE_EDGE`, `REJECT_RENT`, or `REJECT_SAMPLE_AND_EDGE`.
+- The offline replay-gate refresh now runs the frontier step between replay grid and target-watch.
+- Frontier `COLLECT_MORE` ranking is sample-first, so one-pool moonshots do not outrank deeper edge-shaped targets.
+- Tests: local `npm test` passed `96/96`.
+
+Server frontier run:
+
+- Frontier artifact: `data/meta-observer/replay-frontier-2026-06-08T07-08-34-150Z.json`
+- Input grid: `data/meta-observer/replay-path-grid-study-2026-06-08T07-00-06-817Z.json`
+- Paper candidates: `0`
+- Collect-more rows: `704`
+- Mutate-edge rows: `0`
+- Reject-rent rows: `8112`
+- Best collect-more segment: `profile=crowded|rent=yes|initial_liquidity=75_to_125_sol|entry_liquidity_growth=0_to_10_pct|entry_momentum=0_to_10_pct|pre_entry_buys=3_to_5|pre_entry_interactions=11_plus`
+- Best collect-more result: `6` pools, `5` completed paths, `100%` win rate, `24.8883%` median modeled net, `26.4006%` average modeled net
+- Blockers: `sample_pools<20`, `completed_paths<20`
+- Best scenario: `entryDelayMs=3000`, `exitAfterLaterBuys=10`, `maxHoldMs=15000`
+
+Target mutation:
+
+- Default replay target-watch segment was updated from the stale `low_buy_competition` 3-path target to the frontier-selected crowded rent-safe segment above.
+- New target-watch artifact: `data/meta-observer/replay-target-watch-2026-06-08T07-09-33-885Z.json`
+- Target status: `WAIT`
+- Candidate rows: `0`
+- Best target match: `6` pools, `5` completed paths, `100%` win rate, `24.89%` median modeled net
+- Blockers: `sample_pools<20`, `completed_paths<20`
+- Promotion batch preflight was tested against this latest artifact and correctly refused to start before any wallet action.
+
+Interpretation: Darwin found a better frontier target, but it is still not spendable. The required next evidence is at least `20` completed audited paths on this crowded rent-safe segment while preserving the strict win/rent/edge thresholds.
+
 ## 2026-06-05 Break-Even-Aware Snapshot
 
 Server report:
