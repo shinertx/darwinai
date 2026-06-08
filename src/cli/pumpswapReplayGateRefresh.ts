@@ -97,6 +97,14 @@ async function main(): Promise<void> {
   const replayGridFile = latestFile('replay-path-grid-study-', '.json')
   if (!replayGridFile) throw new Error('No replay grid file found after replay step')
 
+  steps.push(runStep('frontier', 'node dist/cli/pumpswapReplayFrontier.js', defaultEnv({
+    PUMPSWAP_REPLAY_FRONTIER_GRID_PATHS: replayGridFile,
+  })))
+  if (steps.at(-1)?.status !== 0) throw new Error('frontier failed')
+
+  const frontierFile = latestFile('replay-frontier-', '.json')
+  if (!frontierFile) throw new Error('No replay frontier file found after frontier step')
+
   steps.push(runStep('target_watch', 'node dist/cli/pumpswapReplayTargetWatch.js', defaultEnv({
     PUMPSWAP_REPLAY_TARGET_GRID_PATHS: replayGridFile,
   })))
@@ -115,8 +123,10 @@ async function main(): Promise<void> {
       eventFile,
       rentAuditFile,
       replayGridFile,
+      frontierFile,
       targetWatchFile,
     },
+    frontier: readJson(frontierFile),
     targetStatus: targetWatch?.status || null,
     targetTotals: targetWatch?.totals || null,
     targetBestMatch: targetWatch?.bestMatch || null,

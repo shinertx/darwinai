@@ -99,15 +99,19 @@ function runRefresh(): number | null {
 
 function latestRefreshSummary(): Pick<
   ReplayGateMonitorState,
-  'latestRefreshArtifact' | 'latestTargetArtifact' | 'lastRefreshStatus' | 'lastTargetStatus'
+  'latestRefreshArtifact' | 'latestFrontierArtifact' | 'latestTargetArtifact' | 'lastRefreshStatus' | 'lastTargetStatus'
 > {
   const latestRefreshArtifact = latestFile('replay-gate-refresh-', '.json', isReplayGateRefreshArtifactName)
   const refresh = readJson(latestRefreshArtifact)
+  const latestFrontierArtifact = typeof refresh?.artifacts === 'object' && refresh.artifacts
+    ? (refresh.artifacts as Record<string, unknown>).frontierFile
+    : latestFile('replay-frontier-', '.json')
   const latestTargetArtifact = typeof refresh?.artifacts === 'object' && refresh.artifacts
     ? (refresh.artifacts as Record<string, unknown>).targetWatchFile
     : latestFile('replay-target-watch-', '.json')
   return {
     latestRefreshArtifact,
+    latestFrontierArtifact: typeof latestFrontierArtifact === 'string' ? latestFrontierArtifact : null,
     latestTargetArtifact: typeof latestTargetArtifact === 'string' ? latestTargetArtifact : null,
     lastRefreshStatus: latestRefreshArtifact ? 'written' : null,
     lastTargetStatus: typeof refresh?.targetStatus === 'string' ? refresh.targetStatus : null,

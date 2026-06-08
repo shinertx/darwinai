@@ -9,6 +9,7 @@ export type ReplayGateMonitorState = {
   lastRefreshStatus?: string | null
   lastTargetStatus?: string | null
   latestRefreshArtifact?: string | null
+  latestFrontierArtifact?: string | null
   latestTargetArtifact?: string | null
 }
 
