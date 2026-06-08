@@ -771,6 +771,39 @@ Low-competition exit-12 preflight dry-run:
 
 Interpretation: the current-window search found no promotion-ready path. Strict-zero has modeled edge but repeatedly fails live entry eligibility under the no-pool-extension rule. The only current rent-tradable paper candidate has thin replay edge and produced another negative preflight dry-run. Live remains locked; the next strategy/search rewrite should either predict and avoid pool-extension-required strict-zero pools before preflight, or search for a materially stronger no-pool-extension profile than low competition.
 
+### Tightened Replay Promotion Thresholds
+
+Code change:
+
+- Commit: `618e57a Tighten replay promotion thresholds`
+- Added replay options:
+  - `PUMPSWAP_REPLAY_MIN_RENT_TRADABLE_RATE`
+  - `PUMPSWAP_REPLAY_MIN_MEDIAN_MODELED_NET_RETURN_PCT`
+  - `PUMPSWAP_REPLAY_MIN_AVG_MODELED_NET_RETURN_PCT`
+- Tests: local `npm test` passed `76/76`.
+
+Reason: the old offline replay gate could label a profile as `PAPER_CANDIDATE` with any rent-free evidence and any positive modeled median/average. The live evidence showed that was too weak: strict-zero had modeled edge but repeatedly hit `pool_extend`, while low competition had thin modeled edge and then produced negative dry-runs.
+
+Strict current-window replay:
+
+- Grid: `data/meta-observer/replay-path-grid-study-2026-06-08T05-47-35-728Z.json`
+- Events file: `data/meta-observer/events-2026-06-08T03-29-38-002Z.jsonl`
+- Rent audit: `data/meta-observer/first-buyer-rent-audit-2026-06-08T05-35-24-070Z.json`
+- Scenarios: `120`
+- Cost proxy: `0.000015966 SOL` at `0.0001 SOL` size
+- Minimum win rate: `0.65`
+- Minimum rent-tradable rate: `0.90`
+- Minimum median modeled net: `15%`
+- Minimum average modeled net: `15%`
+- Paper candidates: `0`
+
+Top blocked profiles:
+
+- `strict_zero`, best median modeled net around `34.6999%`, but rent-tradable rate `0`, blocked by `no_rent_free_first_buyer_evidence` and `rent_tradable_rate<0.9`.
+- `low_buy_competition`, best current-window rows around `2.49%` to `4.08%` median modeled net, blocked by the new modeled-margin thresholds.
+
+Interpretation: after requiring both no-pool-extension coverage and a real modeled margin, the current observer window has no paper candidate worth another funded canary. Live remains locked. The next useful mutation is not parameter tuning around the current profiles; it is a new profile/search feature that combines no-pool-extension eligibility with materially stronger post-cost exitability.
+
 ## 2026-06-05 Break-Even-Aware Snapshot
 
 Server report:
