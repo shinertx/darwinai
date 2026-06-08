@@ -862,6 +862,53 @@ Profile outcomes:
 
 Interpretation: the measured rent-seeded variants do not produce a promotion-ready candidate in the current observer window. There is no justified dry-run or funded canary from these profiles. Live remains locked. The next search rewrite should move beyond first-five-second shape alone and add a stronger predictor, such as creator/pool metadata, reserve trajectory, or a post-entry momentum filter that can be replayed before any live path.
 
+### Replay Segment Momentum Grid
+
+Code change:
+
+- Commit: `fb2e498 Add replay segment momentum analysis`
+- Replay paths now record first-5-second buy/interact counts, pre-entry buy/interact counts, and entry momentum from pool creation price to entry price.
+- Replay reports now include `bySegment`, grouping profile, rent eligibility, entry-momentum band, pre-entry buy band, and pre-entry interaction band under the same strict promotion blockers.
+- Tests: local `npm test` passed `79/79`.
+
+Reason: first-five-second profile alone was not enough. Strict-zero had modeled edge but was not executable without pool extension, while rent-seeded and low-competition variants were either sparse or too thin after costs. Segmenting by entry momentum and pre-entry crowding tests whether a stronger no-pool-extension subgroup exists before spending another live canary.
+
+Current-window segment replay:
+
+- Grid: `data/meta-observer/replay-path-grid-study-2026-06-08T06-14-55-859Z.json`
+- Events file: `data/meta-observer/events-2026-06-08T03-29-38-002Z.jsonl`
+- Rent audit: `data/meta-observer/first-buyer-rent-audit-2026-06-08T05-35-24-070Z.json`
+- Scenarios: `120`
+- Paper profile candidates: `0`
+- Paper segment candidates: `0`
+
+Combined audited-window segment replay:
+
+- Grid: `data/meta-observer/replay-path-grid-study-2026-06-08T06-16-55-007Z.json`
+- Events files: `events-2026-06-05T13-16-06-840Z.jsonl`, `events-2026-06-05T13-44-16-379Z.jsonl`, `events-2026-06-08T03-29-38-002Z.jsonl`
+- Rent audits: `first-buyer-rent-audit-2026-06-05T14-37-06-737Z.json`, `first-buyer-rent-audit-2026-06-05T14-47-04-759Z.json`, `first-buyer-rent-audit-2026-06-08T05-35-24-070Z.json`
+- Scenarios: `120`
+- Paper profile candidates: `0`
+- Paper segment candidates: `0`
+
+Best 20-plus-pool rent-safe segment:
+
+- Segment: `profile=low_buy_competition|rent=yes|entry_momentum=0_to_10_pct|pre_entry_buys=1|pre_entry_interactions=6_to_10`
+- Best sample: `31` pools, `30` completed paths, rent-tradable rate `100%`
+- Best win rate: `93.33%`
+- Best median modeled net in the 20-plus-pool rent-safe set: `12.10%`
+- Blocker: `median_modeled_net_return_pct<=15`
+
+Best edge-shaped but undersampled segment:
+
+- Segment: `profile=crowded|rent=yes|entry_momentum=0_to_10_pct|pre_entry_buys=3_to_5|pre_entry_interactions=11_plus`
+- Sample: `13` pools, `9` completed paths, rent-tradable rate `100%`
+- Best median modeled net: `20.68%`
+- Best win rate variant: `88.89%`
+- Blocker: `sample_pools<20`
+
+Interpretation: the segment mutation found a better research target, but not a spendable strategy. The strongest adequately sampled rent-safe segment has strong win rate and average return, but its median net is below the required `15%` margin. The segment that clears modeled edge is only `13` pools and remains an overfit risk. Live remains locked. The next valid work is to either collect enough fresh audited samples for the crowded rent-safe segment to reach `20` pools, or add a stronger feature that lifts the median of the 20-plus-pool rent-safe segment above the cost floor.
+
 ## 2026-06-05 Break-Even-Aware Snapshot
 
 Server report:
