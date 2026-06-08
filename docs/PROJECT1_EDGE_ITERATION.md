@@ -580,6 +580,26 @@ Other skipped candidates:
 
 Interpretation: the prior modeled-only dry-run evidence was too weak because it assumed candidates were entry-tradable. With the live entry preflight enabled, the current stream produced no tradable strict-zero candidate in the bounded run. Live remains locked. The next valid proof step is more preflight-enabled dry-run scanning, not funded execution.
 
+### Second Entry-Preflight Dry-Run Scan
+
+Server scan:
+
+- Scan: `data/meta-observer/cyborg-dry-run-scan-2026-06-08T04-47-25-456Z.json`
+- Dry-run preflight: `true`
+- Live signal max age: `90000 ms`
+- Timeout: `300000 ms`
+- Executed dry-run candidate: none
+
+Strict-zero candidate blocked by live entry preflight:
+
+- Pool `B4AQ8WVBhrF1oQ6LxicRPCeuApLx8nDoDufFXCDDSkoH`: `state_rent_blocked:pool_extend`
+
+Other skipped candidates:
+
+- Nine low-competition or crowded profiles failed the frozen strict-zero shape gate.
+
+Interpretation: this second preflight-enabled scan again found no preflight-tradable strict-zero candidate. The repeated blocker is not lack of modeled upside; it is live entry eligibility under the no-state-rent rule. Live remains locked.
+
 ## 2026-06-05 Break-Even-Aware Snapshot
 
 Server report:
