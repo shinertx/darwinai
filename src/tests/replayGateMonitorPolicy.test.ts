@@ -1,6 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { decideReplayGateRefresh } from '../analysis/ReplayGateMonitorPolicy'
+import {
+  decideReplayGateRefresh,
+  isReplayGateRefreshArtifactName,
+} from '../analysis/ReplayGateMonitorPolicy'
 
 test('replay gate monitor records a baseline when no state exists and run-on-start is off', () => {
   const decision = decideReplayGateRefresh({
@@ -96,4 +99,10 @@ test('replay gate monitor runs when the same event file shrinks', () => {
   assert.equal(decision.shouldRun, true)
   assert.equal(decision.reason, 'event_file_shrank_or_rotated')
   assert.equal(decision.growthBytes, -25)
+})
+
+test('replay gate monitor recognizes refresh artifacts without matching its state file', () => {
+  assert.equal(isReplayGateRefreshArtifactName('replay-gate-refresh-2026-06-08T07-00-07-916Z.json'), true)
+  assert.equal(isReplayGateRefreshArtifactName('replay-gate-refresh-monitor-state.json'), false)
+  assert.equal(isReplayGateRefreshArtifactName('replay-gate-refresh.lock'), false)
 })

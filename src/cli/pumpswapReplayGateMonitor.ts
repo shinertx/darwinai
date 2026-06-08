@@ -4,6 +4,7 @@ import { spawnSync } from 'child_process'
 import dotenv from 'dotenv'
 import {
   decideReplayGateRefresh,
+  isReplayGateRefreshArtifactName,
   type ReplayGateMonitorState,
 } from '../analysis/ReplayGateMonitorPolicy'
 
@@ -34,10 +35,11 @@ function parsePositiveInt(value: string | undefined, fallback: number): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
 }
 
-function latestFile(prefix: string, suffix: string): string | null {
+function latestFile(prefix: string, suffix: string, includeName: (name: string) => boolean = () => true): string | null {
   if (!fs.existsSync(OUTPUT_DIR)) return null
   const candidates = fs.readdirSync(OUTPUT_DIR)
     .filter((name) => name.startsWith(prefix) && name.endsWith(suffix))
+    .filter(includeName)
     .map((name) => path.join(OUTPUT_DIR, name))
     .filter((filePath) => {
       try {
@@ -99,7 +101,7 @@ function latestRefreshSummary(): Pick<
   ReplayGateMonitorState,
   'latestRefreshArtifact' | 'latestTargetArtifact' | 'lastRefreshStatus' | 'lastTargetStatus'
 > {
-  const latestRefreshArtifact = latestFile('replay-gate-refresh-', '.json')
+  const latestRefreshArtifact = latestFile('replay-gate-refresh-', '.json', isReplayGateRefreshArtifactName)
   const refresh = readJson(latestRefreshArtifact)
   const latestTargetArtifact = typeof refresh?.artifacts === 'object' && refresh.artifacts
     ? (refresh.artifacts as Record<string, unknown>).targetWatchFile

@@ -26,6 +26,10 @@ export type ReplayGateMonitorDecision = {
   growthBytes: number
 }
 
+export function isReplayGateRefreshArtifactName(name: string): boolean {
+  return /^replay-gate-refresh-\d{4}-\d{2}-\d{2}T.+\.json$/.test(name)
+}
+
 export function decideReplayGateRefresh(input: ReplayGateMonitorDecisionInput): ReplayGateMonitorDecision {
   if (!input.state?.eventFile || input.state.eventSizeBytes === undefined) {
     return {

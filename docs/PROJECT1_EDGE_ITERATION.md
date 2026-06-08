@@ -1054,6 +1054,30 @@ Current measured state:
 
 Interpretation: the live 20-loop path is now mechanically attached to the offline replay gate. This does not make Darwin profitable yet, but it prevents the operator loop from spending tiny live canaries while the target is still under-sampled.
 
+### Replay Gate Refresh 07:00
+
+Server monitor refresh:
+
+- Summary artifact: `data/meta-observer/replay-gate-refresh-2026-06-08T07-00-07-916Z.json`
+- Rent audit: `data/meta-observer/first-buyer-rent-audit-2026-06-08T06-58-15-620Z.json`
+- Replay grid: `data/meta-observer/replay-path-grid-study-2026-06-08T07-00-06-817Z.json`
+- Target watch: `data/meta-observer/replay-target-watch-2026-06-08T07-00-07-845Z.json`
+- First-buyer pools: `181`
+- Transactions found: `181`
+- Without pool extension: `162`
+- Target status: `WAIT`
+- Target matching rows: `48`
+- Candidate rows: `0`
+- Best target match: `3` pools, `3` completed paths, `100%` win rate, `16.03%` median modeled net
+- Blockers: `sample_pools<20`, `completed_paths<20`
+
+Code fix:
+
+- Monitor state now excludes `replay-gate-refresh-monitor-state.json` when selecting the latest refresh artifact.
+- Tests: local `npm test` passed `93/93`.
+
+Interpretation: the fresh offline refresh did not promote the target. Live remains locked. The current blocker is still sample depth, not model edge on the tiny target.
+
 ## 2026-06-05 Break-Even-Aware Snapshot
 
 Server report:
