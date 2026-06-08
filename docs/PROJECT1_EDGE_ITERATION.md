@@ -208,6 +208,19 @@ npm run analyze:pumpswap:replay-paths
 
 This estimates entry price, exit price, gross return, and modeled net return from observed reserve snapshots. A replay cohort marked `PAPER_CANDIDATE` is still not promotion proof; it only means the cohort may deserve deeper paper testing. A replay cohort marked `BLOCKED` must not be used for a paid live canary.
 
+To search multiple entry/exit assumptions without rereading the full observer file for every hypothesis, use grid mode:
+
+```bash
+PUMPSWAP_REPLAY_FIXED_COST_SOL_LIST=0.000015966 \
+PUMPSWAP_REPLAY_TRADE_SIZE_SOL=0.0001 \
+PUMPSWAP_REPLAY_ENTRY_DELAY_MS_LIST=5000,10000,15000,30000,60000 \
+PUMPSWAP_REPLAY_EXIT_AFTER_LATER_BUYS_LIST=1,2,3,5,10 \
+PUMPSWAP_REPLAY_MAX_HOLD_MS_LIST=60000,180000,300000 \
+npm run analyze:pumpswap:replay-paths
+```
+
+The `0.000015966 SOL` cost proxy is the median round-trip fee estimate from rent-safe first-buyer transactions in the widened five-minute audit below. It is not a Promotion Gate cost claim; it exists to separate true rent-safe execution friction from the prior failed canary's total market/strategy loss.
+
 ## System Architecture
 
 ### Layer 1: Collection
@@ -347,6 +360,63 @@ Project 1 is only considered "advanced" when all are true:
 - Project 1 still has the strongest historical Solana-specific signal in this workspace.
 - That signal is not yet validated as realized live profit.
 - The next gain is likely to come from better cohort discovery, not from arguing about the original strict-zero framing.
+
+## 2026-06-08 Replay Grid Snapshot
+
+Server reports:
+
+- Widened rent audit: `data/meta-observer/first-buyer-rent-audit-2026-06-08T03-35-51-844Z.json`
+- Full loss-floor replay: `data/meta-observer/replay-path-study-2026-06-08T03-38-06-067Z.json`
+- Rent-safe fee-proxy replay: `data/meta-observer/replay-path-study-2026-06-08T03-43-46-978Z.json`
+- Replay grid: `data/meta-observer/replay-path-grid-study-2026-06-08T03-49-11-532Z.json`
+
+Widened rent audit inputs and result:
+
+- Events: `data/meta-observer/events-2026-06-05T14-51-37-753Z.jsonl`
+- Window: `300000 ms`
+- First-buyer pools checked: `2540`
+- Transactions found: `2540`
+- Without pool-extension: `2026`
+- With pool-extension: `514`
+- Without ATA create: `2540`
+- Median rent-safe first-buyer fee: `7983 lamports`
+- Median round-trip fee proxy: `0.000015966 SOL`
+
+Full loss-floor replay:
+
+- Cost: `0.00241144 SOL`
+- Pools: `2730`
+- Completed paths: `2636`
+- Rent-audited pools: `2603`
+- Result: all profiles `BLOCKED`
+
+Rent-safe fee-proxy replay:
+
+- Cost: `0.000015966 SOL`
+- Result: all single-assumption profiles still `BLOCKED`
+- `strict_zero`: `419` pools, `408` completed paths, `88.5%` rent-tradable rate, `43.6%` win rate, `-3.74%` median modeled net.
+
+Replay grid:
+
+- Scenarios: `75`
+- Paper candidates found: `9`
+- All paper candidates were `strict_zero` with `exitAfterLaterBuys=10`.
+
+Best current paper candidate:
+
+- Profile: `strict_zero`
+- Entry delay: `10000 ms`
+- Exit rule: wait for `10` later non-creator buy wallets
+- Max hold: `60000 ms`
+- Cost proxy: `0.000015966 SOL`
+- Pools: `419`
+- Completed paths: `408`
+- Rent-tradable rate: `88.5%`
+- Win rate: `68.6%`
+- Median modeled net return: `26.51%`
+- Status: `PAPER_CANDIDATE`
+
+Interpretation: this is the first evidence-backed strategy shape worth implementing in canary logic, but it is not live promotion proof. The current cyborg canary sells immediately after buy, so it does not implement this replay assumption. Do not run another paid canary until cyborg exit logic supports "wait for 10 later buyers or max-hold, then sell" and that behavior is paper/shadow verified.
 
 ## 2026-06-05 Break-Even-Aware Snapshot
 
