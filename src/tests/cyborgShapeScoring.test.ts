@@ -38,6 +38,32 @@ test('low-competition shapes can still qualify when interactions stay low', () =
   assert.equal(score.estimatedThreePlusLaterBuyWalletRate, 0.806)
 })
 
+test('rent-seeded mode requires an early non-creator buy', () => {
+  const config = resolveCyborgShapeScoringConfig({
+    PUMPSWAP_CYBORG_SCORER_MIN_BUY_COMPETITORS_5S: '1',
+    PUMPSWAP_CYBORG_SCORER_MAX_BUY_COMPETITORS_5S: '1',
+    PUMPSWAP_CYBORG_SCORER_MAX_INTERACTIONS_5S: '2',
+    PUMPSWAP_CYBORG_SCORER_MIN_SCORE: '70',
+  })
+  const strictZero = scoreCyborgShape({
+    buyCompetitorWalletCount5s: 0,
+    interactingWalletCount5s: 0,
+    liquiditySol: 60,
+    uniqueCreatorInRun: true,
+  }, config)
+  const rentSeeded = scoreCyborgShape({
+    buyCompetitorWalletCount5s: 1,
+    interactingWalletCount5s: 2,
+    liquiditySol: 60,
+    uniqueCreatorInRun: true,
+  }, config)
+
+  assert.equal(strictZero.qualified, false)
+  assert.ok(strictZero.blockers.includes('buy_competitors_5s<1'))
+  assert.equal(rentSeeded.qualified, true)
+  assert.ok(rentSeeded.reasons.includes('rent_seeded_buy_competitor_5s'))
+})
+
 test('repeat creators and noisy 5-second windows are blocked', () => {
   const config = resolveCyborgShapeScoringConfig({})
   const score = scoreCyborgShape({

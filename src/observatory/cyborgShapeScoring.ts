@@ -9,6 +9,7 @@ export type CyborgShapeInput = {
 
 export type CyborgShapeScoringConfig = {
   minScore: number
+  minBuyCompetitors5s: number
   maxBuyCompetitors5s: number
   maxInteractingWallets5s: number
   minLiquiditySol: number
@@ -27,6 +28,7 @@ export type CyborgShapeScore = {
 }
 
 const DEFAULT_MIN_SCORE = 70
+const DEFAULT_MIN_BUY_COMPETITORS_5S = 0
 const DEFAULT_MAX_BUY_COMPETITORS_5S = 1
 const DEFAULT_MAX_INTERACTING_WALLETS_5S = 12
 const DEFAULT_MIN_LIQUIDITY_SOL = 20
@@ -61,6 +63,10 @@ export function resolveCyborgShapeScoringConfig(
 ): CyborgShapeScoringConfig {
   return {
     minScore: parsePositiveInt(env.PUMPSWAP_CYBORG_SCORER_MIN_SCORE, DEFAULT_MIN_SCORE),
+    minBuyCompetitors5s: parseNonNegativeInt(
+      env.PUMPSWAP_CYBORG_SCORER_MIN_BUY_COMPETITORS_5S,
+      DEFAULT_MIN_BUY_COMPETITORS_5S
+    ),
     maxBuyCompetitors5s: parseNonNegativeInt(
       env.PUMPSWAP_CYBORG_SCORER_MAX_BUY_COMPETITORS_5S,
       DEFAULT_MAX_BUY_COMPETITORS_5S
@@ -100,6 +106,9 @@ export function scoreCyborgShape(
 
   if (config.requireUniqueCreator && !input.uniqueCreatorInRun) {
     blockers.push('repeat_creator')
+  }
+  if (input.buyCompetitorWalletCount5s < config.minBuyCompetitors5s) {
+    blockers.push(`buy_competitors_5s<${config.minBuyCompetitors5s}`)
   }
   if (input.buyCompetitorWalletCount5s > config.maxBuyCompetitors5s) {
     blockers.push(`buy_competitors_5s>${config.maxBuyCompetitors5s}`)
@@ -143,6 +152,9 @@ export function scoreCyborgShape(
   if (input.uniqueCreatorInRun) {
     score += 8
     reasons.push('unique_creator_in_run')
+  }
+  if (input.buyCompetitorWalletCount5s > 0) {
+    reasons.push('rent_seeded_buy_competitor_5s')
   }
 
   if (input.liquiditySol >= Math.max(50, config.minLiquiditySol)) {

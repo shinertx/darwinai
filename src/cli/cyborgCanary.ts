@@ -767,6 +767,7 @@ async function main(): Promise<void> {
   console.log(
     '[CyborgCanary] Shape scorer:',
     `minScore=${shapeConfig.minScore}`,
+    `minBuy5s=${shapeConfig.minBuyCompetitors5s}`,
     `maxBuy5s=${shapeConfig.maxBuyCompetitors5s}`,
     `maxInteractions5s=${shapeConfig.maxInteractingWallets5s}`,
     `minLiquiditySol=${shapeConfig.minLiquiditySol.toFixed(2)}`,

@@ -14,6 +14,7 @@ function parseNonNegativeInt(value: string | undefined, fallback: number): numbe
 export type CyborgStrategyConfig = {
   scorer: {
     minScore: number
+    minBuyCompetitors5s: number
     maxBuyCompetitors5s: number
     maxInteractingWallets5s: number
     minLiquiditySol: number
@@ -48,6 +49,7 @@ export function resolveCyborgStrategyConfig(
   return {
     scorer: {
       minScore: shapeConfig.minScore,
+      minBuyCompetitors5s: shapeConfig.minBuyCompetitors5s,
       maxBuyCompetitors5s: shapeConfig.maxBuyCompetitors5s,
       maxInteractingWallets5s: shapeConfig.maxInteractingWallets5s,
       minLiquiditySol: shapeConfig.minLiquiditySol,

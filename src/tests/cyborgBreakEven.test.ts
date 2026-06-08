@@ -8,6 +8,7 @@ import { analyzeCyborgBreakEven } from '../promotion/CyborgBreakEven'
 const STRATEGY_CONFIG = {
   scorer: {
     minScore: 58,
+    minBuyCompetitors5s: 0,
     maxBuyCompetitors5s: 1,
     maxInteractingWallets5s: 12,
     minLiquiditySol: 20,

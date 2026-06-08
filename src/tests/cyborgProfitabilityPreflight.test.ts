@@ -11,6 +11,7 @@ import type { CyborgStrategyConfig } from '../observatory/cyborgStrategyConfig'
 const BASE_CONFIG: CyborgStrategyConfig = {
   scorer: {
     minScore: 58,
+    minBuyCompetitors5s: 0,
     maxBuyCompetitors5s: 0,
     maxInteractingWallets5s: 0,
     minLiquiditySol: 0,
