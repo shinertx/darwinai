@@ -133,6 +133,32 @@ test('cyborg profitability preflight blocks same config after a negative dry-run
   })
 })
 
+test('cyborg profitability preflight treats signal freshness as non-economic for dry-run blocking', () => {
+  withTempDir((dir) => {
+    writeDryRun(dir, {
+      modeledNetReturnSol: -0.000002,
+      strategyConfig: {
+        ...BASE_CONFIG,
+        liveSignalMaxAgeMs: null,
+      },
+    })
+
+    const result = evaluateCyborgProfitabilityPreflight({
+      inputDir: dir,
+      canarySizeSol: 0.0001,
+      strategyConfig: {
+        ...BASE_CONFIG,
+        liveSignalMaxAgeMs: '90000',
+      },
+      nowMs: 2_000,
+    })
+
+    assert.equal(result.allowed, false)
+    assert.equal(result.reason, 'known_unprofitable')
+    assert.equal(result.blockingEvidenceCount, 1)
+  })
+})
+
 test('cyborg profitability preflight ignores dry-run evidence from a different strategy config', () => {
   withTempDir((dir) => {
     writeDryRun(dir, {

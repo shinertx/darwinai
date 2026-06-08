@@ -55,6 +55,19 @@ function sha256(value: unknown): string {
   return crypto.createHash('sha256').update(stableStringify(value)).digest('hex')
 }
 
+function normalizeDryRunBlockingConfig(value: unknown): unknown {
+  if (value === null || typeof value !== 'object') return value
+  if (Array.isArray(value)) return value.map(normalizeDryRunBlockingConfig)
+
+  const record = value as Record<string, unknown>
+  const normalized: Record<string, unknown> = {}
+  for (const key of Object.keys(record)) {
+    if (key === 'liveSignalMaxAgeMs') continue
+    normalized[key] = normalizeDryRunBlockingConfig(record[key])
+  }
+  return normalized
+}
+
 function readResult(filePath: string): CyborgCanaryResultLite | null {
   try {
     return JSON.parse(fs.readFileSync(filePath, 'utf8')) as CyborgCanaryResultLite
@@ -107,6 +120,7 @@ export function evaluateCyborgProfitabilityPreflight(
   const lookbackMs = options.lookbackMs ?? DEFAULT_LOOKBACK_MS
   const minObservedLoops = options.minObservedLoops ?? DEFAULT_MIN_OBSERVED_LOOPS
   const configHash = sha256(options.strategyConfig)
+  const dryRunBlockingConfigHash = sha256(normalizeDryRunBlockingConfig(options.strategyConfig))
   const sinceMs = nowMs - lookbackMs
 
   const matching = resultFiles(options.inputDir)
@@ -114,7 +128,13 @@ export function evaluateCyborgProfitabilityPreflight(
     .filter((entry): entry is { filePath: string; result: CyborgCanaryResultLite } => entry.result !== null)
     .filter(({ result }) => typeof result.executedAtMs === 'number' && result.executedAtMs >= sinceMs)
     .filter(({ result }) => isSameSize(result, options.canarySizeSol))
-    .filter(({ result }) => Boolean(result.strategyConfig) && sha256(result.strategyConfig) === configHash)
+    .filter(({ result }) => {
+      if (!result.strategyConfig) return false
+      if (result.dryRun) {
+        return sha256(normalizeDryRunBlockingConfig(result.strategyConfig)) === dryRunBlockingConfigHash
+      }
+      return sha256(result.strategyConfig) === configHash
+    })
     .sort((a, b) => (a.result.executedAtMs || 0) - (b.result.executedAtMs || 0))
 
   const blocking = matching.filter(({ result }) => isBlockingEvidence(result))
