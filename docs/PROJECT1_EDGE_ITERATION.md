@@ -482,6 +482,75 @@ Result:
 
 Interpretation: the fresh live stream produced one non-trading sample whose reserve-snapshot path would have cleared the rent-safe fixed-cost proxy. This is stronger than the prior dry run because it records modeled entry, modeled exit, gross return, cost proxy, and modeled net. It is still not Promotion Gate proof because no real buy, real sell, wallet delta, finality check, or flattening occurred.
 
+### Repeated Dry-Run Stop Signal
+
+Additional server artifacts from the same frozen dry-run config:
+
+- `data/meta-observer/cyborg-dry-run-2026-06-08T04-12-45-477Z.json`
+- `data/meta-observer/cyborg-dry-run-2026-06-08T04-15-04-032Z.json`
+- `data/meta-observer/cyborg-dry-run-2026-06-08T04-18-37-218Z.json`
+
+Modeled dry-run summary, excluding the first pre-modeled dry-run:
+
+- Modeled samples: `4`
+- Modeled wins: `3`
+- Modeled losses: `1`
+- Win rate: `75.0%`
+- Median modeled net: `56.0832972076497%`
+- Min modeled net: `-11.701430068772698%`
+- Max modeled net: `87.38174390670272%`
+
+The loss was `data/meta-observer/cyborg-dry-run-2026-06-08T04-18-37-218Z.json`:
+
+- Pool: `3tbxGEhPhQgJaEThTFHvzfSgReuDYkZt8hcf1Xo6MQTq`
+- Exit reason: `max_hold`
+- Later buy wallets observed: `9`
+- Exit wait: `60213 ms`
+- Modeled gross return: `4.264569931227302%`
+- Modeled net return: `-11.701430068772698%`
+
+Interpretation: the exact `exitAfterLaterBuys=10`, `maxHold=60000 ms` dry-run config is not ready for a funded canary. A single modeled max-hold loss is enough to keep live locked because Promotion Gate requires repeatable net-positive live round trips, not a best-case sample.
+
+### Current-Window Rent Audit and Replay Grid
+
+Current-window rent audit:
+
+- Audit: `data/meta-observer/first-buyer-rent-audit-2026-06-08T04-20-39-395Z.json`
+- Events: `data/meta-observer/events-2026-06-08T03-29-38-002Z.jsonl`
+- Window: `300000 ms`
+- First-buyer pools checked: `107`
+- Transactions found: `107`
+- With pool extension: `13`
+- Without pool extension: `94`
+- Rent-free first buyer possible: `true`
+
+Current-window replay grid with the current rent audit:
+
+- Grid: `data/meta-observer/replay-path-grid-study-2026-06-08T04-21-06-744Z.json`
+- Scenarios: `24`
+- Best current strict-zero scenario: `entry=10000 ms`, `exitAfterLaterBuys=9`, `maxHold=30000 ms`
+- Pools: `14`
+- Completed paths: `14`
+- Rent-tradable rate: `85.7%`
+- Win rate: `71.4%`
+- Median modeled net: `57.4889993537714%`
+- Average modeled net: `47.6004993580729%`
+- Status: `BLOCKED`
+- Blocker: `sample_pools<20`
+
+The current configured canary-like scenario, `entry=10000 ms`, `exitAfterLaterBuys=10`, `maxHold=60000 ms`, also remains blocked:
+
+- Pools: `14`
+- Completed paths: `14`
+- Rent-tradable rate: `85.7%`
+- Win rate: `71.4%`
+- Median modeled net: `56.0832972076497%`
+- Average modeled net: `43.749821729260326%`
+- Status: `BLOCKED`
+- Blocker: `sample_pools<20`
+
+Decision: no funded live canary from this evidence yet. Keep the PumpSwap meta observer running, collect at least `20` current-window strict-zero paths with current rent audit coverage, rerun the replay grid, then only consider a tiny funded `0.0001 SOL` canary if the frozen config has no unresolved modeled stop signal and the current-window grid clears its blockers.
+
 ## 2026-06-05 Break-Even-Aware Snapshot
 
 Server report:
