@@ -811,7 +811,6 @@ async function main(): Promise<void> {
         if (executing) return
         if (handledPools.has(state.pool)) return
         executing = true
-        const executor = (!dryRun || dryRunPreflight) ? new LiveExecutor() : null
         try {
           const signal = deriveSignalFromPool(state, Date.now())
           if (!signal) {
@@ -857,6 +856,7 @@ async function main(): Promise<void> {
             return
           }
 
+          const executor = (!dryRun || dryRunPreflight) ? new LiveExecutor() : null
           const assessment = dryRun && !dryRunPreflight
             ? { tradable: true, reason: null }
             : await (executor as LiveExecutor).assessEntryTradability(signal, canarySizeSol)
