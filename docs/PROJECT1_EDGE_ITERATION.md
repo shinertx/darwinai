@@ -1113,6 +1113,13 @@ Target mutation:
 
 Interpretation: Darwin found a better frontier target, but it is still not spendable. The required next evidence is at least `20` completed audited paths on this crowded rent-safe segment while preserving the strict win/rent/edge thresholds.
 
+Monitor state correction:
+
+- Commit `0f193c6` updates `darwin-replay-gate-monitor` state reporting so `latestTargetArtifact` and `latestFrontierArtifact` point at the newest target/frontier artifacts, even when they were generated manually after the last full refresh.
+- Server monitor state now points at `replay-target-watch-2026-06-08T07-09-33-885Z.json` and `replay-frontier-2026-06-08T07-08-34-150Z.json`.
+- Latest monitor state remains `WAIT`; event growth since the current baseline was below the `25000000` byte refresh threshold.
+- Tests: local `npm test` passed `96/96`.
+
 ## 2026-06-05 Break-Even-Aware Snapshot
 
 Server report:
