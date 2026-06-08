@@ -35,6 +35,14 @@ export type ReplayTargetWatchOptions = {
   minRentTradableRate: number
   minMedianModeledNetReturnPct: number
   minAvgModeledNetReturnPct: number
+  shadowFailures?: ReplayTargetWatchShadowFailure[]
+}
+
+export type ReplayTargetWatchShadowFailure = {
+  segmentIncludes: string[]
+  scenarioInputs?: ReplayTargetWatchScenario['inputs']
+  evidenceFile: string
+  reason: string
 }
 
 export type ReplayTargetWatchMatch = ReplayTargetWatchSegment & {
@@ -90,6 +98,29 @@ function blockersFor(row: ReplayTargetWatchSegment, options: ReplayTargetWatchOp
   return blockers
 }
 
+function scenarioMatches(
+  scenarioInputs: ReplayTargetWatchScenario['inputs'] | undefined,
+  failureInputs: ReplayTargetWatchScenario['inputs'] | undefined
+): boolean {
+  if (!failureInputs) return true
+  return (
+    (failureInputs.entryDelayMs === undefined || scenarioInputs?.entryDelayMs === failureInputs.entryDelayMs)
+    && (failureInputs.maxHoldMs === undefined || scenarioInputs?.maxHoldMs === failureInputs.maxHoldMs)
+    && (failureInputs.exitAfterLaterBuys === undefined || scenarioInputs?.exitAfterLaterBuys === failureInputs.exitAfterLaterBuys)
+  )
+}
+
+function shadowBlockersFor(
+  row: ReplayTargetWatchSegment,
+  scenarioInputs: ReplayTargetWatchScenario['inputs'] | undefined,
+  options: ReplayTargetWatchOptions
+): string[] {
+  return (options.shadowFailures || [])
+    .filter((failure) => targetMatches(row.segment, failure.segmentIncludes))
+    .filter((failure) => scenarioMatches(scenarioInputs, failure.scenarioInputs))
+    .map((failure) => `shadow_failure:${failure.reason}:${failure.evidenceFile}`)
+}
+
 function rankMatches(a: ReplayTargetWatchMatch, b: ReplayTargetWatchMatch): number {
   return (
     a.blockers.length - b.blockers.length
@@ -115,7 +146,10 @@ export function analyzePumpswapReplayTargetWatch(
         matches.push({
           ...row,
           scenarioInputs: scenario.inputs,
-          blockers: blockersFor(row, options),
+          blockers: [
+            ...blockersFor(row, options),
+            ...shadowBlockersFor(row, scenario.inputs, options),
+          ],
         })
       }
     }

@@ -4,6 +4,7 @@ import dotenv from 'dotenv'
 import {
   analyzePumpswapReplayTargetWatch,
   type ReplayTargetWatchGrid,
+  type ReplayTargetWatchShadowFailure,
 } from '../analysis/PumpswapReplayTargetWatch'
 
 dotenv.config()
@@ -63,17 +64,75 @@ function readGrid(filePath: string): ReplayTargetWatchGrid {
   return JSON.parse(fs.readFileSync(filePath, 'utf8')) as ReplayTargetWatchGrid
 }
 
+type CyborgDryRunShadowLite = {
+  dryRun?: boolean
+  executedAtMs?: number
+  sizeSol?: number
+  modeledNetReturnSol?: number | null
+  modeledNetReturnPct?: number | null
+  strategyConfig?: {
+    executionDeferMs?: number
+    exitRule?: {
+      mode?: string
+      laterBuyThreshold?: number
+      maxHoldMs?: number
+    }
+  }
+}
+
+function latestDryRunFiles(): string[] {
+  if (!fs.existsSync(OUTPUT_DIR)) return []
+  return fs.readdirSync(OUTPUT_DIR)
+    .filter((name) => name.startsWith('cyborg-dry-run-') && name.endsWith('.json') && !name.startsWith('cyborg-dry-run-scan-'))
+    .map((name) => path.join(OUTPUT_DIR, name))
+    .filter((filePath) => fs.statSync(filePath).size > 0)
+    .sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs)
+    .slice(0, parsePositiveInt(process.env.PUMPSWAP_REPLAY_TARGET_SHADOW_LOOKBACK_FILES, 50))
+}
+
+function readDryRun(filePath: string): CyborgDryRunShadowLite | null {
+  try {
+    return JSON.parse(fs.readFileSync(filePath, 'utf8')) as CyborgDryRunShadowLite
+  } catch {
+    return null
+  }
+}
+
+function resolveShadowFailures(targetSegmentIncludes: string[]): ReplayTargetWatchShadowFailure[] {
+  const failures: ReplayTargetWatchShadowFailure[] = []
+  for (const filePath of latestDryRunFiles()) {
+    const dryRun = readDryRun(filePath)
+    if (!dryRun?.dryRun || !dryRun.strategyConfig) continue
+    const modeledNetReturnSol = dryRun.modeledNetReturnSol
+    if (typeof modeledNetReturnSol !== 'number' || !Number.isFinite(modeledNetReturnSol) || modeledNetReturnSol > 0) {
+      continue
+    }
+    failures.push({
+      segmentIncludes: targetSegmentIncludes,
+      scenarioInputs: {
+        entryDelayMs: dryRun.strategyConfig.executionDeferMs,
+        exitAfterLaterBuys: dryRun.strategyConfig.exitRule?.laterBuyThreshold,
+        maxHoldMs: dryRun.strategyConfig.exitRule?.maxHoldMs,
+      },
+      evidenceFile: filePath,
+      reason: 'modeled_net_return_sol<=0',
+    })
+  }
+  return failures
+}
+
 async function main(): Promise<void> {
   const gridFiles = resolveGridFiles()
   if (!gridFiles.length) throw new Error('No non-empty replay grid files found')
+  const targetSegmentIncludes = parseStringList(
+    process.env.PUMPSWAP_REPLAY_TARGET_SEGMENT_INCLUDES,
+    DEFAULT_TARGET_SEGMENT_INCLUDES
+  )
 
   const report = analyzePumpswapReplayTargetWatch(
     gridFiles.map(readGrid),
     {
-      targetSegmentIncludes: parseStringList(
-        process.env.PUMPSWAP_REPLAY_TARGET_SEGMENT_INCLUDES,
-        DEFAULT_TARGET_SEGMENT_INCLUDES
-      ),
+      targetSegmentIncludes,
       minSamplePools: parsePositiveInt(process.env.PUMPSWAP_REPLAY_TARGET_MIN_SAMPLE_POOLS, 20),
       minCompletedPaths: parsePositiveInt(process.env.PUMPSWAP_REPLAY_TARGET_MIN_COMPLETED_PATHS, 20),
       minWinRate: parseNonNegativeFloat(process.env.PUMPSWAP_REPLAY_TARGET_MIN_WIN_RATE, 0.65),
@@ -86,6 +145,7 @@ async function main(): Promise<void> {
         process.env.PUMPSWAP_REPLAY_TARGET_MIN_AVG_MODELED_NET_RETURN_PCT,
         15
       ),
+      shadowFailures: resolveShadowFailures(targetSegmentIncludes),
     }
   )
 

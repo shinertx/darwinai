@@ -76,6 +76,45 @@ test('target watch promotes only when target sample and edge constraints clear',
   assert.equal(report.bestMatch?.blockers.length, 0)
 })
 
+test('target watch blocks a paper candidate when matching shadow dry-run evidence failed', () => {
+  const report = analyzePumpswapReplayTargetWatch([
+    {
+      generatedAt: 'grid-shadow',
+      scenarios: [
+        {
+          inputs: { entryDelayMs: 5000, maxHoldMs: 15000, exitAfterLaterBuys: 9, fixedCostSol: 0.000015966 },
+          bySegment: [
+            {
+              segment: 'profile=low_buy_competition|rent=yes|initial_liquidity=75_to_125_sol',
+              profile: 'low_buy_competition',
+              pools: 20,
+              completedPaths: 20,
+              rentTradableRate: 1,
+              avgModeledNetReturnPct: 22,
+              medianModeledNetReturnPct: 18,
+              winRate: 0.8,
+            },
+          ],
+        },
+      ],
+    },
+  ], {
+    ...OPTIONS,
+    shadowFailures: [{
+      segmentIncludes: TARGET,
+      scenarioInputs: { entryDelayMs: 5000, maxHoldMs: 15000, exitAfterLaterBuys: 9 },
+      evidenceFile: 'cyborg-dry-run-negative.json',
+      reason: 'modeled_net_return_sol<=0',
+    }],
+  })
+
+  assert.equal(report.status, 'WAIT')
+  assert.equal(report.totals.candidateRows, 0)
+  assert.deepEqual(report.bestMatch?.blockers, [
+    'shadow_failure:modeled_net_return_sol<=0:cyborg-dry-run-negative.json',
+  ])
+})
+
 test('target watch reports target missing when no segment matches the configured includes', () => {
   const report = analyzePumpswapReplayTargetWatch([
     {
