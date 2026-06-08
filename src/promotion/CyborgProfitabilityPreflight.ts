@@ -6,7 +6,9 @@ import type { CyborgStrategyConfig } from '../observatory/cyborgStrategyConfig'
 type CyborgCanaryResultLite = {
   executedAtMs?: number
   sizeSol?: number
+  dryRun?: boolean
   netReturnSol?: number
+  modeledNetReturnSol?: number | null
   buySignature?: string | null
   sellSignature?: string | null
   flattened?: boolean
@@ -64,7 +66,10 @@ function readResult(filePath: string): CyborgCanaryResultLite | null {
 function resultFiles(inputDir: string): string[] {
   if (!fs.existsSync(inputDir)) return []
   return fs.readdirSync(inputDir)
-    .filter((name) => name.startsWith('cyborg-canary-') && name.endsWith('.json'))
+    .filter((name) => (
+      name.startsWith('cyborg-canary-')
+      || name.startsWith('cyborg-dry-run-')
+    ) && name.endsWith('.json'))
     .map((name) => path.join(inputDir, name))
     .sort()
 }
@@ -77,6 +82,22 @@ function isSameSize(result: CyborgCanaryResultLite, canarySizeSol: number): bool
 
 function isCompleteLoop(result: CyborgCanaryResultLite): boolean {
   return Boolean(result.buySignature && result.sellSignature)
+}
+
+function resultReturnSol(result: CyborgCanaryResultLite): number | null {
+  const value = result.dryRun ? result.modeledNetReturnSol : result.netReturnSol
+  return typeof value === 'number' && Number.isFinite(value) ? value : null
+}
+
+function isBlockingEvidence(result: CyborgCanaryResultLite): boolean {
+  if (result.dryRun) {
+    const modeledNetReturnSol = resultReturnSol(result)
+    return modeledNetReturnSol === null || modeledNetReturnSol <= 0
+  }
+  if (!isCompleteLoop(result)) return true
+  if (result.flattened !== true) return true
+  const netReturnSol = resultReturnSol(result)
+  return netReturnSol !== null && netReturnSol <= 0
 }
 
 export function evaluateCyborgProfitabilityPreflight(
@@ -96,18 +117,12 @@ export function evaluateCyborgProfitabilityPreflight(
     .filter(({ result }) => Boolean(result.strategyConfig) && sha256(result.strategyConfig) === configHash)
     .sort((a, b) => (a.result.executedAtMs || 0) - (b.result.executedAtMs || 0))
 
-  const blocking = matching.filter(({ result }) => {
-    if (!isCompleteLoop(result)) return true
-    if (result.flattened !== true) return true
-    return typeof result.netReturnSol === 'number'
-      && Number.isFinite(result.netReturnSol)
-      && result.netReturnSol <= 0
-  })
+  const blocking = matching.filter(({ result }) => isBlockingEvidence(result))
 
   const netReturns = matching
-    .map(({ result }) => result.netReturnSol)
-    .filter((value): value is number => typeof value === 'number' && Number.isFinite(value))
-  const latest = [...matching].reverse().find(({ result }) => typeof result.netReturnSol === 'number')
+    .map(({ result }) => resultReturnSol(result))
+    .filter((value): value is number => value !== null)
+  const latest = [...matching].reverse().find(({ result }) => resultReturnSol(result) !== null)
   const evidenceFiles = blocking.map(({ filePath }) => filePath)
   const blocked = blocking.length >= minObservedLoops
 
@@ -118,9 +133,9 @@ export function evaluateCyborgProfitabilityPreflight(
       matchingEvidenceCount: matching.length,
       blockingEvidenceCount: blocking.length,
       worstNetReturnSol: netReturns.length > 0 ? Math.min(...netReturns) : null,
-      latestNetReturnSol: latest?.result.netReturnSol ?? null,
+      latestNetReturnSol: latest ? resultReturnSol(latest.result) : null,
       evidenceFiles,
-      message: `Refusing promotion batch: this exact cyborg config and ${options.canarySizeSol} SOL size already produced ${blocking.length} non-positive, incomplete, or unflattened live loop(s). Rewrite or prove a new config in paper/offline analysis before spending another live canary.`,
+      message: `Refusing promotion batch: this exact cyborg config and ${options.canarySizeSol} SOL size already produced ${blocking.length} non-positive, incomplete, unflattened, or modeled-negative live/shadow evidence item(s). Rewrite or prove a new config in paper/offline analysis before spending another live canary.`,
     }
   }
 
@@ -131,9 +146,9 @@ export function evaluateCyborgProfitabilityPreflight(
       matchingEvidenceCount: matching.length,
       blockingEvidenceCount: blocking.length,
       worstNetReturnSol: netReturns.length > 0 ? Math.min(...netReturns) : null,
-      latestNetReturnSol: latest?.result.netReturnSol ?? null,
+      latestNetReturnSol: latest ? resultReturnSol(latest.result) : null,
       evidenceFiles,
-      message: `Diagnostic override active: allowing a promotion batch despite ${blocking.length} known non-positive, incomplete, or unflattened live loop(s) for this exact config and size.`,
+      message: `Diagnostic override active: allowing a promotion batch despite ${blocking.length} known non-positive, incomplete, unflattened, or modeled-negative live/shadow evidence item(s) for this exact config and size.`,
     }
   }
 
@@ -143,8 +158,8 @@ export function evaluateCyborgProfitabilityPreflight(
     matchingEvidenceCount: matching.length,
     blockingEvidenceCount: blocking.length,
     worstNetReturnSol: netReturns.length > 0 ? Math.min(...netReturns) : null,
-    latestNetReturnSol: latest?.result.netReturnSol ?? null,
+    latestNetReturnSol: latest ? resultReturnSol(latest.result) : null,
     evidenceFiles,
-    message: 'No matching known-unprofitable cyborg live evidence found for this config and size.',
+    message: 'No matching known-unprofitable cyborg live/shadow evidence found for this config and size.',
   }
 }

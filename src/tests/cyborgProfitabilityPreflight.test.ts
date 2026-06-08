@@ -63,6 +63,24 @@ function writeResult(
   )
 }
 
+function writeDryRun(
+  dir: string,
+  overrides: Record<string, unknown> = {}
+): void {
+  const executedAtMs = Number(overrides.executedAtMs || 2_000)
+  fs.writeFileSync(
+    path.join(dir, `cyborg-dry-run-${executedAtMs}.json`),
+    JSON.stringify({
+      executedAtMs,
+      dryRun: true,
+      sizeSol: 0.0001,
+      modeledNetReturnSol: 0.000001,
+      strategyConfig: BASE_CONFIG,
+      ...overrides,
+    }) + '\n'
+  )
+}
+
 test('cyborg profitability preflight allows when no matching failed evidence exists', () => {
   withTempDir((dir) => {
     const result = evaluateCyborgProfitabilityPreflight({
@@ -93,6 +111,47 @@ test('cyborg profitability preflight blocks same config and size after a negativ
     assert.equal(result.reason, 'known_unprofitable')
     assert.equal(result.blockingEvidenceCount, 1)
     assert.equal(result.latestNetReturnSol, -0.00241144)
+  })
+})
+
+test('cyborg profitability preflight blocks same config after a negative dry-run shadow sample', () => {
+  withTempDir((dir) => {
+    writeDryRun(dir, { modeledNetReturnSol: -0.000002 })
+
+    const result = evaluateCyborgProfitabilityPreflight({
+      inputDir: dir,
+      canarySizeSol: 0.0001,
+      strategyConfig: BASE_CONFIG,
+      nowMs: 2_000,
+    })
+
+    assert.equal(result.allowed, false)
+    assert.equal(result.reason, 'known_unprofitable')
+    assert.equal(result.blockingEvidenceCount, 1)
+    assert.equal(result.latestNetReturnSol, -0.000002)
+    assert.equal(result.evidenceFiles.length, 1)
+  })
+})
+
+test('cyborg profitability preflight ignores dry-run evidence from a different strategy config', () => {
+  withTempDir((dir) => {
+    writeDryRun(dir, {
+      modeledNetReturnSol: -0.000002,
+      strategyConfig: {
+        ...BASE_CONFIG,
+        executionDeferMs: 0,
+      },
+    })
+
+    const result = evaluateCyborgProfitabilityPreflight({
+      inputDir: dir,
+      canarySizeSol: 0.0001,
+      strategyConfig: BASE_CONFIG,
+      nowMs: 2_000,
+    })
+
+    assert.equal(result.allowed, true)
+    assert.equal(result.matchingEvidenceCount, 0)
   })
 })
 

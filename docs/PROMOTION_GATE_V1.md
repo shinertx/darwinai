@@ -88,7 +88,7 @@ This runs sequential one-loop canaries in the foreground, waits for the replay-b
 
 `CYBORG_PROMOTION_STOP_ON_NON_POSITIVE_LOOP=true` stops the batch after the first completed loop that is not net-positive, then writes fail evidence instead of spending through more losing loops.
 
-Before spending the first loop, the batch runner also scans recent `cyborg-canary-*.json` evidence for the same cyborg strategy config and canary size. If that exact config and size already produced a non-positive, incomplete, or unflattened live loop, the runner refuses to start. `CYBORG_PROMOTION_ALLOW_KNOWN_UNPROFITABLE=true` is a diagnostic override only; it must not be used as promotion proof.
+Before spending the first loop, the batch runner also scans recent `cyborg-canary-*.json` and `cyborg-dry-run-*.json` evidence for the same cyborg strategy config and canary size. If that exact config and size already produced a non-positive, incomplete, unflattened, or modeled-negative live/shadow result, the runner refuses to start. `CYBORG_PROMOTION_ALLOW_KNOWN_UNPROFITABLE=true` is a diagnostic override only; it must not be used as promotion proof.
 
 Before spending the first loop, the batch runner must also find a latest `replay-target-watch-*.json` artifact whose status is `PAPER_CANDIDATE`, with at least one candidate row and no target blockers. `WAIT`, `TARGET_NOT_FOUND`, missing artifacts, or blocked best matches keep live locked. `CYBORG_PROMOTION_ALLOW_REPLAY_TARGET_BYPASS=true` is a diagnostic override only; it must not be used as promotion proof.
 

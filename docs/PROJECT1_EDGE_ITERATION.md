@@ -1137,6 +1137,35 @@ Current target-derived config for the frontier segment:
 
 Interpretation: this fixes a live-readiness mismatch. If the target eventually reaches `PAPER_CANDIDATE`, the promotion batch will run the crowded rent-safe segment that replay proved, not the stale quiet-pool default. This does not unlock live yet: the latest target remains `WAIT` with `6` pools, `5` completed paths, and blockers `sample_pools<20` plus `completed_paths<20`.
 
+### Crowded Target Paper Candidate and Shadow Stop
+
+Server target-watch:
+
+- Artifact: `data/meta-observer/replay-target-watch-2026-06-08T16-06-33-467Z.json`
+- Status: `PAPER_CANDIDATE`
+- Candidate rows: `8`
+- Segment: `profile=crowded|rent=yes|initial_liquidity=75_to_125_sol|entry_liquidity_growth=0_to_10_pct|entry_momentum=0_to_10_pct|pre_entry_buys=3_to_5|pre_entry_interactions=11_plus`
+- Best match: `30` completed paths, `100%` rent-tradable rate, `70%` win rate, `17.8901%` median modeled net, `29.6588%` average modeled net
+- Scenario: `entryDelayMs=5000`, `exitAfterLaterBuys=9`, `maxHoldMs=15000`
+
+Target-config dry-run preflight:
+
+- Artifact: `data/meta-observer/cyborg-dry-run-2026-06-08T16-13-22-656Z.json`
+- Pool: `2bGhDEFkayoTrfd6LQAb5pKkUt7sLyfrtkTcPaMKKjfY`
+- Profile: `crowded`
+- Shape score: `18`
+- Exit reason: `later_buy_threshold`
+- Exit wait: `6542 ms`
+- Modeled gross return: `13.6815%`
+- Modeled net return: `-2.2845%`
+
+Code change:
+
+- Matching `cyborg-dry-run-*.json` shadow evidence is now included in `CyborgProfitabilityPreflight`.
+- A modeled-negative dry-run for the same strategy config and canary size blocks the promotion batch before live spending.
+
+Interpretation: the offline replay target is closer than before, but the first matching live-shadow target sample was modeled-negative after the fixed-cost proxy. This is not close enough for funded live proof. Live remains locked until a mutated target/config produces clean positive shadow evidence and then separately passes the 20-loop live Promotion Gate.
+
 ## 2026-06-05 Break-Even-Aware Snapshot
 
 Server report:
