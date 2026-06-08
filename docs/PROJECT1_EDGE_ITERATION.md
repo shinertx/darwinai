@@ -985,6 +985,37 @@ Server target-watch run:
 
 Interpretation: the target-watch gate makes the current decision explicit and repeatable. This target is not dead, but it is not spendable. It needs at least `20` completed audited replay paths while keeping rent tradability, win rate, median modeled net, and average modeled net above the strict thresholds. Until that happens, live remains locked.
 
+### Replay Gate Refresh Command
+
+Code change:
+
+- Commit: `acaf66f Add replay gate refresh command`
+- Added `npm run analyze:pumpswap:replay-gate-refresh`.
+- The command runs the offline sequence:
+  - first-buyer rent audit
+  - strict replay grid
+  - target-watch gate
+  - summary artifact
+- This command is non-trading. It reads observer/RPC data and writes artifacts; it does not open, close, or promote a wallet position.
+- Tests: local `npm test` passed `82/82`.
+
+First server refresh run:
+
+- Summary artifact: `data/meta-observer/replay-gate-refresh-2026-06-08T06-38-07-100Z.json`
+- Rent audit: `data/meta-observer/first-buyer-rent-audit-2026-06-08T06-36-08-905Z.json`
+- Replay grid: `data/meta-observer/replay-path-grid-study-2026-06-08T06-38-06-250Z.json`
+- Target watch: `data/meta-observer/replay-target-watch-2026-06-08T06-38-07-058Z.json`
+- First-buyer pools: `168`
+- Transactions found: `168`
+- Without pool extension: `150`
+- Target status: `WAIT`
+- Target matching rows: `48`
+- Candidate rows: `0`
+- Best target match: `3` pools, `3` completed paths, `100%` win rate, `16.03%` median modeled net
+- Blockers: `sample_pools<20`, `completed_paths<20`
+
+Interpretation: the current-window target still has the right edge shape but not enough sample. The target decayed from the combined historical `8` completed paths to `3` completed paths in the fresh current-window-only refresh, so the right action is continued offline collection and refresh, not funded execution.
+
 ## 2026-06-05 Break-Even-Aware Snapshot
 
 Server report:
