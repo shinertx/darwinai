@@ -103,18 +103,19 @@ function latestRefreshSummary(): Pick<
 > {
   const latestRefreshArtifact = latestFile('replay-gate-refresh-', '.json', isReplayGateRefreshArtifactName)
   const refresh = readJson(latestRefreshArtifact)
-  const latestFrontierArtifact = typeof refresh?.artifacts === 'object' && refresh.artifacts
-    ? (refresh.artifacts as Record<string, unknown>).frontierFile
-    : latestFile('replay-frontier-', '.json')
-  const latestTargetArtifact = typeof refresh?.artifacts === 'object' && refresh.artifacts
-    ? (refresh.artifacts as Record<string, unknown>).targetWatchFile
-    : latestFile('replay-target-watch-', '.json')
+  const latestFrontierArtifact = latestFile('replay-frontier-', '.json')
+  const latestTargetArtifact = latestFile('replay-target-watch-', '.json')
+  const targetWatch = readJson(latestTargetArtifact)
   return {
     latestRefreshArtifact,
     latestFrontierArtifact: typeof latestFrontierArtifact === 'string' ? latestFrontierArtifact : null,
     latestTargetArtifact: typeof latestTargetArtifact === 'string' ? latestTargetArtifact : null,
     lastRefreshStatus: latestRefreshArtifact ? 'written' : null,
-    lastTargetStatus: typeof refresh?.targetStatus === 'string' ? refresh.targetStatus : null,
+    lastTargetStatus: typeof targetWatch?.status === 'string'
+      ? targetWatch.status
+      : typeof refresh?.targetStatus === 'string'
+        ? refresh.targetStatus
+        : null,
   }
 }
 
