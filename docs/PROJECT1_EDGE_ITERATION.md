@@ -1165,6 +1165,7 @@ Code change:
 - A modeled-negative dry-run for the same strategy config and canary size blocks the promotion batch before live spending.
 - For dry-run blocking only, `liveSignalMaxAgeMs` is ignored so signal-freshness metadata cannot hide a modeled-negative result from the same economic/scorer config.
 - Replay target-watch now also reads recent `cyborg-dry-run-*.json` shadow evidence and adds a `shadow_failure` blocker when the current target/scenario has modeled-negative evidence.
+- The cyborg promotion batch now requires a matching positive dry-run shadow result before it starts spending. A replay-only paper candidate cannot start funded live loops by itself.
 
 Interpretation: the offline replay target is closer than before, but the first matching live-shadow target sample was modeled-negative after the fixed-cost proxy. This is not close enough for funded live proof. Live remains locked until a mutated target/config produces clean positive shadow evidence and then separately passes the 20-loop live Promotion Gate.
 

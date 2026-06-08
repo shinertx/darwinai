@@ -96,6 +96,40 @@ test('cyborg profitability preflight allows when no matching failed evidence exi
   })
 })
 
+test('cyborg profitability preflight can require positive dry-run shadow evidence before live spending', () => {
+  withTempDir((dir) => {
+    const result = evaluateCyborgProfitabilityPreflight({
+      inputDir: dir,
+      canarySizeSol: 0.0001,
+      strategyConfig: BASE_CONFIG,
+      nowMs: 2_000,
+      requirePositiveShadowEvidence: true,
+    })
+
+    assert.equal(result.allowed, false)
+    assert.equal(result.reason, 'missing_positive_shadow')
+    assert.equal(result.positiveShadowEvidenceCount, 0)
+  })
+})
+
+test('cyborg profitability preflight allows live spending after matching positive dry-run shadow evidence', () => {
+  withTempDir((dir) => {
+    writeDryRun(dir, { modeledNetReturnSol: 0.000002 })
+
+    const result = evaluateCyborgProfitabilityPreflight({
+      inputDir: dir,
+      canarySizeSol: 0.0001,
+      strategyConfig: BASE_CONFIG,
+      nowMs: 2_000,
+      requirePositiveShadowEvidence: true,
+    })
+
+    assert.equal(result.allowed, true)
+    assert.equal(result.reason, 'no_matching_evidence')
+    assert.equal(result.positiveShadowEvidenceCount, 1)
+  })
+})
+
 test('cyborg profitability preflight blocks same config and size after a negative loop', () => {
   withTempDir((dir) => {
     writeResult(dir, { netReturnSol: -0.00241144 })

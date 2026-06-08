@@ -23,13 +23,15 @@ export type CyborgProfitabilityPreflightOptions = {
   lookbackMs?: number
   minObservedLoops?: number
   allowKnownUnprofitable?: boolean
+  requirePositiveShadowEvidence?: boolean
 }
 
 export type CyborgProfitabilityPreflightResult = {
   allowed: boolean
-  reason: 'no_matching_evidence' | 'known_unprofitable' | 'override_known_unprofitable'
+  reason: 'no_matching_evidence' | 'known_unprofitable' | 'override_known_unprofitable' | 'missing_positive_shadow'
   matchingEvidenceCount: number
   blockingEvidenceCount: number
+  positiveShadowEvidenceCount: number
   worstNetReturnSol: number | null
   latestNetReturnSol: number | null
   evidenceFiles: string[]
@@ -113,6 +115,12 @@ function isBlockingEvidence(result: CyborgCanaryResultLite): boolean {
   return netReturnSol !== null && netReturnSol <= 0
 }
 
+function isPositiveShadowEvidence(result: CyborgCanaryResultLite): boolean {
+  if (!result.dryRun) return false
+  const modeledNetReturnSol = resultReturnSol(result)
+  return modeledNetReturnSol !== null && modeledNetReturnSol > 0
+}
+
 export function evaluateCyborgProfitabilityPreflight(
   options: CyborgProfitabilityPreflightOptions
 ): CyborgProfitabilityPreflightResult {
@@ -138,6 +146,7 @@ export function evaluateCyborgProfitabilityPreflight(
     .sort((a, b) => (a.result.executedAtMs || 0) - (b.result.executedAtMs || 0))
 
   const blocking = matching.filter(({ result }) => isBlockingEvidence(result))
+  const positiveShadow = matching.filter(({ result }) => isPositiveShadowEvidence(result))
 
   const netReturns = matching
     .map(({ result }) => resultReturnSol(result))
@@ -152,6 +161,7 @@ export function evaluateCyborgProfitabilityPreflight(
       reason: 'known_unprofitable',
       matchingEvidenceCount: matching.length,
       blockingEvidenceCount: blocking.length,
+      positiveShadowEvidenceCount: positiveShadow.length,
       worstNetReturnSol: netReturns.length > 0 ? Math.min(...netReturns) : null,
       latestNetReturnSol: latest ? resultReturnSol(latest.result) : null,
       evidenceFiles,
@@ -165,10 +175,25 @@ export function evaluateCyborgProfitabilityPreflight(
       reason: 'override_known_unprofitable',
       matchingEvidenceCount: matching.length,
       blockingEvidenceCount: blocking.length,
+      positiveShadowEvidenceCount: positiveShadow.length,
       worstNetReturnSol: netReturns.length > 0 ? Math.min(...netReturns) : null,
       latestNetReturnSol: latest ? resultReturnSol(latest.result) : null,
       evidenceFiles,
       message: `Diagnostic override active: allowing a promotion batch despite ${blocking.length} known non-positive, incomplete, unflattened, or modeled-negative live/shadow evidence item(s) for this exact config and size.`,
+    }
+  }
+
+  if (options.requirePositiveShadowEvidence && positiveShadow.length === 0) {
+    return {
+      allowed: false,
+      reason: 'missing_positive_shadow',
+      matchingEvidenceCount: matching.length,
+      blockingEvidenceCount: blocking.length,
+      positiveShadowEvidenceCount: 0,
+      worstNetReturnSol: netReturns.length > 0 ? Math.min(...netReturns) : null,
+      latestNetReturnSol: latest ? resultReturnSol(latest.result) : null,
+      evidenceFiles: [],
+      message: `Refusing promotion batch: this exact cyborg config and ${options.canarySizeSol} SOL size has no matching positive dry-run shadow evidence. Run and pass a no-spend shadow canary before spending live capital.`,
     }
   }
 
@@ -177,6 +202,7 @@ export function evaluateCyborgProfitabilityPreflight(
     reason: 'no_matching_evidence',
     matchingEvidenceCount: matching.length,
     blockingEvidenceCount: blocking.length,
+    positiveShadowEvidenceCount: positiveShadow.length,
     worstNetReturnSol: netReturns.length > 0 ? Math.min(...netReturns) : null,
     latestNetReturnSol: latest ? resultReturnSol(latest.result) : null,
     evidenceFiles,

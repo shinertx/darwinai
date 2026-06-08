@@ -158,6 +158,7 @@ async function main(): Promise<void> {
     lookbackMs: profitPreflightLookbackMs,
     minObservedLoops: profitPreflightMinObservedLoops,
     allowKnownUnprofitable,
+    requirePositiveShadowEvidence: true,
   })
   console.log('[CyborgPromotionBatch] Profitability preflight:', profitabilityPreflight.message)
   if (profitabilityPreflight.evidenceFiles.length > 0) {
