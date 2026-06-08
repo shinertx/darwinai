@@ -92,6 +92,42 @@ test('replay profile records missing rent-free evidence as a blocker', () => {
   assert.ok(report.byProfile[0].promotionBlockers.includes('no_rent_free_first_buyer_evidence'))
 })
 
+test('replay profile can require a high rent-tradable rate before paper promotion', () => {
+  const rows = [
+    ...poolRows('pool-a'),
+    ...poolRows('pool-b'),
+  ]
+  const report = analyzePumpswapReplayPaths(
+    rows,
+    [{ pool: 'pool-a', tradable: true }],
+    {
+      ...OPTIONS,
+      minPromotionSamplePools: 2,
+      minRentTradableRate: 0.75,
+    }
+  )
+
+  assert.equal(report.byProfile[0].rentTradableRate, 0.5)
+  assert.equal(report.byProfile[0].promotionStatus, 'BLOCKED')
+  assert.ok(report.byProfile[0].promotionBlockers.includes('rent_tradable_rate<0.75'))
+})
+
+test('replay profile can require modeled edge margin above the fixed cost floor', () => {
+  const report = analyzePumpswapReplayPaths(
+    poolRows('pool-a'),
+    [{ pool: 'pool-a', tradable: true }],
+    {
+      ...OPTIONS,
+      minMedianModeledNetReturnPct: 150,
+      minAvgModeledNetReturnPct: 150,
+    }
+  )
+
+  assert.equal(report.byProfile[0].promotionStatus, 'BLOCKED')
+  assert.ok(report.byProfile[0].promotionBlockers.includes('median_modeled_net_return_pct<=150'))
+  assert.ok(report.byProfile[0].promotionBlockers.includes('avg_modeled_net_return_pct<=150'))
+})
+
 test('replay profiles separate early-window sell-only probes from strict-zero pools', () => {
   const rows = [
     ...poolRows('pool-a'),

@@ -114,6 +114,15 @@ function baseOptions() {
     fixedCostSol: parseNonNegativeFloat(process.env.PUMPSWAP_REPLAY_FIXED_COST_SOL, 0),
     minPromotionSamplePools: parsePositiveInt(process.env.PUMPSWAP_REPLAY_MIN_PROMOTION_SAMPLE_POOLS, 20),
     minWinRate: parsePositiveFloat(process.env.PUMPSWAP_REPLAY_MIN_WIN_RATE, 0.65),
+    minRentTradableRate: parseNonNegativeFloat(process.env.PUMPSWAP_REPLAY_MIN_RENT_TRADABLE_RATE, 0),
+    minMedianModeledNetReturnPct: parseNonNegativeFloat(
+      process.env.PUMPSWAP_REPLAY_MIN_MEDIAN_MODELED_NET_RETURN_PCT,
+      0
+    ),
+    minAvgModeledNetReturnPct: parseNonNegativeFloat(
+      process.env.PUMPSWAP_REPLAY_MIN_AVG_MODELED_NET_RETURN_PCT,
+      0
+    ),
   }
 }
 

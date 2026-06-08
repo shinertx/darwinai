@@ -43,6 +43,9 @@ export type PumpswapReplayOptions = {
   fixedCostSol: number
   minPromotionSamplePools: number
   minWinRate: number
+  minRentTradableRate?: number
+  minMedianModeledNetReturnPct?: number
+  minAvgModeledNetReturnPct?: number
 }
 
 export type ReplayPathResult = {
@@ -349,6 +352,10 @@ function summarizeProfile(
   const medianModeledNetReturnPct = median(completed.map((path) => path.modeledNetReturnPct))
   const avgModeledNetReturnPct = average(completed.map((path) => path.modeledNetReturnPct))
   const winRate = ratio(wins.length, completed.length)
+  const rentTradableRate = ratio(rows.filter((path) => path.rentTradable).length, rows.length)
+  const minRentTradableRate = options.minRentTradableRate ?? 0
+  const minMedianModeledNetReturnPct = options.minMedianModeledNetReturnPct ?? 0
+  const minAvgModeledNetReturnPct = options.minAvgModeledNetReturnPct ?? 0
 
   if (rows.length < options.minPromotionSamplePools) {
     promotionBlockers.push(`sample_pools<${options.minPromotionSamplePools}`)
@@ -359,11 +366,14 @@ function summarizeProfile(
   if (!rows.some((path) => path.rentTradable)) {
     promotionBlockers.push('no_rent_free_first_buyer_evidence')
   }
-  if (medianModeledNetReturnPct === null || medianModeledNetReturnPct <= 0) {
-    promotionBlockers.push('median_modeled_net_return_pct<=0')
+  if (rentTradableRate === null || rentTradableRate < minRentTradableRate) {
+    promotionBlockers.push(`rent_tradable_rate<${minRentTradableRate}`)
   }
-  if (avgModeledNetReturnPct === null || avgModeledNetReturnPct <= 0) {
-    promotionBlockers.push('avg_modeled_net_return_pct<=0')
+  if (medianModeledNetReturnPct === null || medianModeledNetReturnPct <= minMedianModeledNetReturnPct) {
+    promotionBlockers.push(`median_modeled_net_return_pct<=${minMedianModeledNetReturnPct}`)
+  }
+  if (avgModeledNetReturnPct === null || avgModeledNetReturnPct <= minAvgModeledNetReturnPct) {
+    promotionBlockers.push(`avg_modeled_net_return_pct<=${minAvgModeledNetReturnPct}`)
   }
   if (winRate === null || winRate < options.minWinRate) {
     promotionBlockers.push(`win_rate<${options.minWinRate}`)
@@ -373,7 +383,7 @@ function summarizeProfile(
     profile,
     pools: rows.length,
     completedPaths: completed.length,
-    rentTradableRate: ratio(rows.filter((path) => path.rentTradable).length, rows.length),
+    rentTradableRate,
     avgGrossReturnPct: average(completed.map((path) => path.grossReturnPct)),
     medianGrossReturnPct: median(completed.map((path) => path.grossReturnPct)),
     avgModeledNetReturnPct,
