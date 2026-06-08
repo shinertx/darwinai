@@ -25,6 +25,7 @@
     "analyze:pumpswap:alt-edges": "node scripts/ops/analyze_pumpswap_alt_edges.mjs",
     "analyze:pumpswap:event-cohorts": "node scripts/ops/analyze_pumpswap_event_cohorts.mjs",
     "analyze:pumpswap:replay-paths": "node dist/cli/pumpswapReplayPaths.js",
+    "analyze:pumpswap:replay-target": "node dist/cli/pumpswapReplayTargetWatch.js",
     "test": "npm run build && node --test dist/tests/*.test.js",
     "pm2:start:paper:stable": "pm2 start ecosystem.config.cjs --only darwin-paper-stable",
     "pm2:start:paper:research": "pm2 start ecosystem.config.cjs --only darwin-paper-research",
