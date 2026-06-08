@@ -600,6 +600,36 @@ Other skipped candidates:
 
 Interpretation: this second preflight-enabled scan again found no preflight-tradable strict-zero candidate. The repeated blocker is not lack of modeled upside; it is live entry eligibility under the no-state-rent rule. Live remains locked.
 
+### Promotion-Aligned ATA Preflight Dry-Run
+
+The promotion batch runner uses `DARWIN_LIVE_ALLOW_ATA_CREATE=true` and `DARWIN_LIVE_CLOSE_TOKEN_ATA_ON_SELL=true`, while keeping pool extension blocked unless explicitly overridden for diagnostics. The prior preflight scans were stricter than the actual promotion-batch config because they also blocked ATA creation.
+
+Server dry-run:
+
+- Artifact: `data/meta-observer/cyborg-dry-run-2026-06-08T04-51-45-286Z.json`
+- Dry-run preflight: `true`
+- Live signal max age: `90000 ms`
+- ATA create allowed: `true`
+- Close token ATA on sell: `true`
+- Pool extension allowed: `false`
+- Entry tradability preflight: `tradable=true`
+
+Result:
+
+- Pool: `4ZkFBLu2Fn9SovDbRL5vyFHe37X2X44uoK18eUjJaPtx`
+- Mint: `5k9ZcNsd2iotCnt6Qhd35e17WtVqJMDEDnwYyqJiQ1To`
+- Profile: `strict_zero`
+- Shape score: `93`
+- Exit reason: `later_buy_threshold`
+- Later buy wallets observed: `10`
+- Exit wait: `11595 ms`
+- Modeled gross return: `3.4255985803460565%`
+- Modeled fixed cost: `0.000015966 SOL`
+- Modeled net return: `-12.540401419653943%`
+- Modeled net SOL at `0.0001 SOL` size: `-0.000012540401419653945 SOL`
+
+Interpretation: promotion-aligned preflight can find an entry-tradable strict-zero candidate when ATA creation is allowed and close-on-sell is enabled, but the first such candidate was modeled-negative after the fixed-cost proxy. This is a stronger stop signal than the entry-blocked scans: the current strategy is not ready for funded canary even under the promotion-batch state-rent policy.
+
 ## 2026-06-05 Break-Even-Aware Snapshot
 
 Server report:
