@@ -170,7 +170,9 @@ async function main(): Promise<void> {
               inputs: report.inputs,
               totals: report.totals,
               byProfile: report.byProfile,
+              bySegment: report.bySegment,
               paperCandidates: report.byProfile.filter((row) => row.promotionStatus === 'PAPER_CANDIDATE'),
+              paperSegmentCandidates: report.bySegment.filter((row) => row.promotionStatus === 'PAPER_CANDIDATE'),
             })
           }
         }
@@ -208,6 +210,19 @@ async function main(): Promise<void> {
         `- ${row.profile.profile}: entry=${row.scenario.inputs.entryDelayMs}ms exitBuys=${row.scenario.inputs.exitAfterLaterBuys} maxHold=${row.scenario.inputs.maxHoldMs}ms cost=${row.scenario.inputs.fixedCostSol} pools=${row.profile.pools} win=${row.profile.winRate === null ? 'n/a' : `${(row.profile.winRate * 100).toFixed(1)}%`} medianNet=${formatPct(row.profile.medianModeledNetReturnPct)} status=${row.profile.promotionStatus}`
       )
     }
+    const rankedSegments = scenarios
+      .flatMap((scenario) => scenario.bySegment.map((segment) => ({ scenario, segment })))
+      .sort((a, b) => (
+        (b.segment.promotionStatus === 'PAPER_CANDIDATE' ? 1 : 0) - (a.segment.promotionStatus === 'PAPER_CANDIDATE' ? 1 : 0)
+        || (b.segment.winRate || 0) - (a.segment.winRate || 0)
+        || (b.segment.medianModeledNetReturnPct ?? Number.NEGATIVE_INFINITY) - (a.segment.medianModeledNetReturnPct ?? Number.NEGATIVE_INFINITY)
+      ))
+    console.log('[ReplayPathGrid] Top segments:')
+    for (const row of rankedSegments.slice(0, 10)) {
+      console.log(
+        `- ${row.segment.segment}: entry=${row.scenario.inputs.entryDelayMs}ms exitBuys=${row.scenario.inputs.exitAfterLaterBuys} maxHold=${row.scenario.inputs.maxHoldMs}ms cost=${row.scenario.inputs.fixedCostSol} pools=${row.segment.pools} win=${row.segment.winRate === null ? 'n/a' : `${(row.segment.winRate * 100).toFixed(1)}%`} medianNet=${formatPct(row.segment.medianModeledNetReturnPct)} status=${row.segment.promotionStatus}`
+      )
+    }
     return
   }
 
@@ -232,6 +247,12 @@ async function main(): Promise<void> {
   for (const row of report.byProfile.slice(0, 8)) {
     console.log(
       `- ${row.profile}: pools=${row.pools}, completed=${row.completedPaths}, win=${row.winRate === null ? 'n/a' : `${(row.winRate * 100).toFixed(1)}%`}, medianNet=${formatPct(row.medianModeledNetReturnPct)}, status=${row.promotionStatus}`
+    )
+  }
+  console.log('[ReplayPath] Top segments:')
+  for (const row of report.bySegment.slice(0, 8)) {
+    console.log(
+      `- ${row.segment}: pools=${row.pools}, completed=${row.completedPaths}, win=${row.winRate === null ? 'n/a' : `${(row.winRate * 100).toFixed(1)}%`}, medianNet=${formatPct(row.medianModeledNetReturnPct)}, status=${row.promotionStatus}`
     )
   }
 }

@@ -64,6 +64,9 @@ test('replay paths estimate gross and modeled net return from reserve snapshots'
   assert.equal(report.totals.completedPaths, 1)
   assert.equal(report.paths[0].profile, 'strict_zero')
   assert.equal(report.paths[0].exitReason, 'later_buy_threshold')
+  assert.equal(report.paths[0].preEntryBuyWallets, 0)
+  assert.equal(report.paths[0].preEntryInteractingWallets, 0)
+  assert.equal(report.paths[0].entryMomentumPct, 0)
   assert.equal(Math.round(report.paths[0].grossReturnPct ?? 0), 150)
   assert.equal(Math.round(report.paths[0].modeledNetReturnPct ?? 0), 140)
   assert.equal(report.byProfile[0].promotionStatus, 'PAPER_CANDIDATE')
@@ -195,4 +198,36 @@ test('replay profiles separate rent-seeded low-noise pools from broad low compet
   )
 
   assert.equal(report.paths[0].profile, 'rent_seeded_low_noise')
+})
+
+test('replay segments capture pre-entry momentum and crowding cohorts', () => {
+  const rows = [
+    ...poolRows('pool-a'),
+    {
+      kind: 'buy',
+      pool: 'pool-a',
+      user: 'early-buyer',
+      resolvedTimeMs: 3_000,
+      poolBaseReserveRaw: '110000000000',
+      poolQuoteReserveRaw: '90000000',
+      creatorSigner: 'creator',
+    },
+  ]
+
+  const report = analyzePumpswapReplayPaths(
+    rows,
+    [{ pool: 'pool-a', tradable: true }],
+    OPTIONS
+  )
+  const path = report.paths[0]
+  const segment = report.bySegment.find((row) => row.segment.includes('entry_momentum=10_to_25_pct'))
+
+  assert.equal(path.profile, 'one_buy_probe')
+  assert.equal(path.buyCompetitorWallets5s, 1)
+  assert.equal(path.preEntryBuyWallets, 1)
+  assert.equal(path.preEntryInteractingWallets, 1)
+  assert.equal(Math.round(path.entryMomentumPct ?? 0), 22)
+  assert.ok(segment)
+  assert.ok(segment?.segment.includes('rent=yes'))
+  assert.ok(segment?.segment.includes('pre_entry_buys=1'))
 })

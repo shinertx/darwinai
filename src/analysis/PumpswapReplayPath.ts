@@ -54,6 +54,12 @@ export type ReplayPathResult = {
   profile: ReplayProfile
   creatorSigner: string | null
   rentTradable: boolean
+  buyCompetitorWallets5s: number
+  interactingWallets5s: number
+  buyCompetitorWallets10s: number
+  preEntryBuyWallets: number
+  preEntryInteractingWallets: number
+  entryMomentumPct: number | null
   entryTimeMs: number
   exitTimeMs: number | null
   entryPriceSolPerToken: number | null
@@ -80,6 +86,10 @@ export type ReplayProfileSummary = {
   promotionBlockers: string[]
 }
 
+export type ReplaySegmentSummary = ReplayProfileSummary & {
+  segment: string
+}
+
 export type PumpswapReplayReport = {
   generatedAt: string
   inputs: PumpswapReplayOptions
@@ -89,6 +99,7 @@ export type PumpswapReplayReport = {
     rentAuditedPools: number
   }
   byProfile: ReplayProfileSummary[]
+  bySegment: ReplaySegmentSummary[]
   paths: ReplayPathResult[]
 }
 
@@ -284,6 +295,31 @@ function snapshotAtOrBefore(snapshots: Snapshot[], timeMs: number): Snapshot | n
   return selected
 }
 
+function pctChange(from: number | null | undefined, to: number | null | undefined): number | null {
+  if (!from || !to) return null
+  return ((to / from) - 1) * 100
+}
+
+function countNonCreatorWalletsBeforeEntry(
+  pool: PoolState,
+  entryTimeMs: number
+): { preEntryBuyWallets: number, preEntryInteractingWallets: number } {
+  const buyWallets = new Set<string>()
+  const interactingWallets = new Set<string>()
+
+  for (const snapshot of pool.snapshots) {
+    if (snapshot.timeMs <= pool.anchorTimeMs || snapshot.timeMs > entryTimeMs) continue
+    if (!snapshot.user || snapshot.user === pool.creatorSigner) continue
+    interactingWallets.add(snapshot.user)
+    if (snapshot.kind === 'buy') buyWallets.add(snapshot.user)
+  }
+
+  return {
+    preEntryBuyWallets: buyWallets.size,
+    preEntryInteractingWallets: interactingWallets.size,
+  }
+}
+
 function replayPool(
   pool: PoolState,
   rentByPool: Map<string, PumpSwapReplayRentAuditRow>,
@@ -291,11 +327,13 @@ function replayPool(
 ): ReplayPathResult {
   const entryTimeMs = pool.anchorTimeMs + options.entryDelayMs
   const entrySnapshot = snapshotAtOrBefore(pool.snapshots, entryTimeMs)
+  const anchorSnapshot = snapshotAtOrBefore(pool.snapshots, pool.anchorTimeMs)
   const maxExitTimeMs = entryTimeMs + options.maxHoldMs
   const laterBuyWallets = new Set<string>()
   let thresholdExit: Snapshot | null = null
   let maxHoldExit: Snapshot | null = null
   let lastExit: Snapshot | null = null
+  const preEntry = countNonCreatorWalletsBeforeEntry(pool, entryTimeMs)
 
   for (const snapshot of pool.snapshots) {
     if (snapshot.timeMs <= entryTimeMs || snapshot.priceSolPerToken === null) continue
@@ -330,6 +368,12 @@ function replayPool(
     profile: determineProfile(pool),
     creatorSigner: pool.creatorSigner,
     rentTradable: rentAuditTradable(rentByPool.get(pool.pool)),
+    buyCompetitorWallets5s: pool.buyCompetitorWallets5s.size,
+    interactingWallets5s: pool.interactingWallets5s.size,
+    buyCompetitorWallets10s: pool.buyCompetitorWallets10s.size,
+    preEntryBuyWallets: preEntry.preEntryBuyWallets,
+    preEntryInteractingWallets: preEntry.preEntryInteractingWallets,
+    entryMomentumPct: pctChange(anchorSnapshot?.priceSolPerToken, entrySnapshot?.priceSolPerToken),
     entryTimeMs,
     exitTimeMs: exitSnapshot?.timeMs ?? null,
     entryPriceSolPerToken: entrySnapshot?.priceSolPerToken ?? null,
@@ -342,12 +386,53 @@ function replayPool(
   }
 }
 
-function summarizeProfile(
-  profile: ReplayProfile,
+function countBand(value: number): string {
+  if (value <= 0) return '0'
+  if (value === 1) return '1'
+  if (value === 2) return '2'
+  if (value <= 5) return '3_to_5'
+  if (value <= 10) return '6_to_10'
+  return '11_plus'
+}
+
+function momentumBand(value: number | null): string {
+  if (value === null) return 'missing'
+  if (value <= -25) return 'lte_neg25_pct'
+  if (value <= 0) return 'neg25_to_0_pct'
+  if (value <= 10) return '0_to_10_pct'
+  if (value <= 25) return '10_to_25_pct'
+  if (value <= 50) return '25_to_50_pct'
+  return 'gt_50_pct'
+}
+
+function segmentKey(path: ReplayPathResult): string {
+  return [
+    `profile=${path.profile}`,
+    `rent=${path.rentTradable ? 'yes' : 'no'}`,
+    `entry_momentum=${momentumBand(path.entryMomentumPct)}`,
+    `pre_entry_buys=${countBand(path.preEntryBuyWallets)}`,
+    `pre_entry_interactions=${countBand(path.preEntryInteractingWallets)}`,
+  ].join('|')
+}
+
+function summarizeSegment(
+  segment: string,
   paths: ReplayPathResult[],
   options: PumpswapReplayOptions
+): ReplaySegmentSummary {
+  const rows = paths.filter((path) => segmentKey(path) === segment)
+  return {
+    segment,
+    ...summarizeRows(segment, rows, options),
+  }
+}
+
+function summarizeRows(
+  profile: ReplayProfile | string,
+  rows: ReplayPathResult[],
+  options: PumpswapReplayOptions
 ): ReplayProfileSummary {
-  const rows = paths.filter((path) => path.profile === profile)
+  const typedProfile = rows[0]?.profile || profile as ReplayProfile
   const completed = rows.filter((path) => path.modeledNetReturnPct !== null)
   const wins = completed.filter((path) => (path.modeledNetReturnPct ?? Number.NEGATIVE_INFINITY) > 0)
   const promotionBlockers: string[] = []
@@ -382,7 +467,7 @@ function summarizeProfile(
   }
 
   return {
-    profile,
+    profile: typedProfile,
     pools: rows.length,
     completedPaths: completed.length,
     rentTradableRate,
@@ -397,6 +482,15 @@ function summarizeProfile(
   }
 }
 
+function summarizeProfile(
+  profile: ReplayProfile,
+  paths: ReplayPathResult[],
+  options: PumpswapReplayOptions
+): ReplayProfileSummary {
+  const rows = paths.filter((path) => path.profile === profile)
+  return summarizeRows(profile, rows, options)
+}
+
 function reportFromPools(
   pools: Map<string, PoolState>,
   rentAuditRows: PumpSwapReplayRentAuditRow[],
@@ -409,10 +503,19 @@ function reportFromPools(
   }
   const paths = [...pools.values()].map((pool) => replayPool(pool, rentByPool, options))
   const profileNames = Array.from(new Set(paths.map((path) => path.profile)))
+  const segmentNames = Array.from(new Set(paths.map((path) => segmentKey(path))))
   const byProfile = profileNames
     .map((profile) => summarizeProfile(profile, paths, options))
     .sort((a, b) => (
       (b.medianModeledNetReturnPct ?? Number.NEGATIVE_INFINITY)
+      - (a.medianModeledNetReturnPct ?? Number.NEGATIVE_INFINITY)
+    ))
+  const bySegment = segmentNames
+    .map((segment) => summarizeSegment(segment, paths, options))
+    .sort((a, b) => (
+      (b.promotionStatus === 'PAPER_CANDIDATE' ? 1 : 0) - (a.promotionStatus === 'PAPER_CANDIDATE' ? 1 : 0)
+      || (b.winRate || 0) - (a.winRate || 0)
+      || (b.medianModeledNetReturnPct ?? Number.NEGATIVE_INFINITY)
       - (a.medianModeledNetReturnPct ?? Number.NEGATIVE_INFINITY)
     ))
 
@@ -425,6 +528,7 @@ function reportFromPools(
       rentAuditedPools: paths.filter((path) => rentByPool.has(path.pool)).length,
     },
     byProfile,
+    bySegment,
     paths,
   }
 }
