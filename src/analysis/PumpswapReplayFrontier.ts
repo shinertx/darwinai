@@ -134,6 +134,16 @@ function rank(a: ReplayFrontierCandidate, b: ReplayFrontierCandidate): number {
   )
 }
 
+function rankCollectMore(a: ReplayFrontierCandidate, b: ReplayFrontierCandidate): number {
+  return (
+    b.completedPaths - a.completedPaths
+    || b.pools - a.pools
+    || valueOrNegativeInfinity(b.medianModeledNetReturnPct) - valueOrNegativeInfinity(a.medianModeledNetReturnPct)
+    || valueOrNegativeInfinity(b.avgModeledNetReturnPct) - valueOrNegativeInfinity(a.avgModeledNetReturnPct)
+    || valueOrNegativeInfinity(b.winRate) - valueOrNegativeInfinity(a.winRate)
+  )
+}
+
 function candidateFrom(
   kind: 'profile' | 'segment',
   row: ReplayFrontierMetricRow,
@@ -170,12 +180,12 @@ export function analyzePumpswapReplayFrontier(
     }
   }
 
-  const byAction = (action: ReplayFrontierAction) => candidates
+  const byAction = (action: ReplayFrontierAction, sorter: typeof rank = rank) => candidates
     .filter((candidate) => candidate.action === action)
-    .sort(rank)
+    .sort(sorter)
 
   const topPaperCandidates = byAction('PAPER_CANDIDATE')
-  const topCollectMore = byAction('COLLECT_MORE')
+  const topCollectMore = byAction('COLLECT_MORE', rankCollectMore)
   const topMutateEdge = byAction('MUTATE_EDGE')
   const topRejectRent = byAction('REJECT_RENT')
   const rejectSampleAndEdge = byAction('REJECT_SAMPLE_AND_EDGE')

@@ -89,3 +89,36 @@ test('replay frontier separates rent failures from adequately sampled thin edges
   assert.equal(report.topMutateEdge[0].id, 'low_buy_competition')
   assert.ok(report.topMutateEdge[0].blockers.includes('median_modeled_net_return_pct<=15'))
 })
+
+test('replay frontier ranks collect-more rows by sample depth before edge size', () => {
+  const report = analyzePumpswapReplayFrontier([
+    {
+      scenarios: [
+        {
+          bySegment: [
+            {
+              segment: 'profile=small_moonshot|rent=yes',
+              pools: 1,
+              completedPaths: 1,
+              rentTradableRate: 1,
+              avgModeledNetReturnPct: 900,
+              medianModeledNetReturnPct: 900,
+              winRate: 1,
+            },
+            {
+              segment: 'profile=deeper_target|rent=yes',
+              pools: 8,
+              completedPaths: 8,
+              rentTradableRate: 1,
+              avgModeledNetReturnPct: 20,
+              medianModeledNetReturnPct: 16,
+              winRate: 0.8,
+            },
+          ],
+        },
+      ],
+    },
+  ], OPTIONS)
+
+  assert.equal(report.topCollectMore[0].id, 'profile=deeper_target|rent=yes')
+})
