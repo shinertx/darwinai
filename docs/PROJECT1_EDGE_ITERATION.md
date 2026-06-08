@@ -1016,6 +1016,18 @@ First server refresh run:
 
 Interpretation: the current-window target still has the right edge shape but not enough sample. The target decayed from the combined historical `8` completed paths to `3` completed paths in the fresh current-window-only refresh, so the right action is continued offline collection and refresh, not funded execution.
 
+### Replay Gate Monitor
+
+Code change:
+
+- Added `npm run monitor:pumpswap:replay-gate`.
+- Added PM2 app `darwin-replay-gate-monitor`.
+- The monitor watches the active observer `events-*.jsonl` file and reruns the offline replay-gate refresh only after the file grows by the configured threshold.
+- Defaults: `600000 ms` interval, `25000000` byte growth threshold, and `PUMPSWAP_REPLAY_GATE_MONITOR_RUN_ON_START=false`.
+- Tests: local `npm test` passed `88/88`.
+
+Interpretation: this converts the current target from a manual check into an offline evidence loop. It does not trade, promote, or unlock capital. Its only job is to keep asking whether the target segment has reached enough audited samples to become a paper candidate or has decayed enough to kill.
+
 ## 2026-06-05 Break-Even-Aware Snapshot
 
 Server report:

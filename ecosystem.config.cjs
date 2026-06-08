@@ -112,5 +112,21 @@ module.exports = {
         ...buildMetaObserverPaths(),
       },
     },
+    {
+      name: 'darwin-replay-gate-monitor',
+      script: 'dist/cli/pumpswapReplayGateMonitor.js',
+      cwd: __dirname,
+      autostart: false,
+      stop_exit_codes: [0],
+      out_file: 'logs/replay-gate-monitor.out.log',
+      error_file: 'logs/replay-gate-monitor.error.log',
+      env: {
+        DARWIN_MODE: 'paper',
+        PUMPSWAP_META_OUTPUT_DIR: 'data/meta-observer',
+        PUMPSWAP_REPLAY_GATE_MONITOR_INTERVAL_MS: process.env.PUMPSWAP_REPLAY_GATE_MONITOR_INTERVAL_MS || '600000',
+        PUMPSWAP_REPLAY_GATE_MONITOR_MIN_EVENT_GROWTH_BYTES: process.env.PUMPSWAP_REPLAY_GATE_MONITOR_MIN_EVENT_GROWTH_BYTES || '25000000',
+        PUMPSWAP_REPLAY_GATE_MONITOR_RUN_ON_START: process.env.PUMPSWAP_REPLAY_GATE_MONITOR_RUN_ON_START || 'false',
+      },
+    },
   ],
 }

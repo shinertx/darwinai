@@ -27,6 +27,7 @@
     "analyze:pumpswap:replay-paths": "node dist/cli/pumpswapReplayPaths.js",
     "analyze:pumpswap:replay-target": "node dist/cli/pumpswapReplayTargetWatch.js",
     "analyze:pumpswap:replay-gate-refresh": "node dist/cli/pumpswapReplayGateRefresh.js",
+    "monitor:pumpswap:replay-gate": "node dist/cli/pumpswapReplayGateMonitor.js",
     "test": "npm run build && node --test dist/tests/*.test.js",
     "pm2:start:paper:stable": "pm2 start ecosystem.config.cjs --only darwin-paper-stable",
     "pm2:start:paper:research": "pm2 start ecosystem.config.cjs --only darwin-paper-research",
@@ -34,6 +35,7 @@
     "pm2:start:live:canary": "pm2 start ecosystem.config.cjs --only darwin-live-canary",
     "pm2:start:autoresearch": "pm2 start ecosystem.config.cjs --only darwin-autoresearch",
     "pm2:start:pumpswap:meta": "pm2 start ecosystem.config.cjs --only darwin-pumpswap-meta-observer",
+    "pm2:start:pumpswap:replay-gate-monitor": "pm2 start ecosystem.config.cjs --only darwin-replay-gate-monitor",
     "smoke:settlement:devnet": "node scripts/ops/test_settlement_devnet.mjs"
   },
   "keywords": [],
