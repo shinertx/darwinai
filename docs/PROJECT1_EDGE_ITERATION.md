@@ -552,6 +552,34 @@ The current configured canary-like scenario, `entry=10000 ms`, `exitAfterLaterBu
 
 Decision: no funded live canary from this evidence yet. Keep the PumpSwap meta observer running, collect at least `20` current-window strict-zero paths with current rent audit coverage, rerun the replay grid, then only consider a tiny funded `0.0001 SOL` canary if the frozen config has no unresolved modeled stop signal and the current-window grid clears its blockers.
 
+### Entry-Preflight Dry-Run Scan
+
+Code update:
+
+- `PUMPSWAP_CYBORG_DRY_RUN_PREFLIGHT=true` makes dry-run mode run the same live entry tradability preflight before waiting for the modeled exit.
+- Dry-run still does not open a wallet position or submit a transaction.
+- If no preflight-tradable candidate executes before timeout, the run now writes `cyborg-dry-run-scan-*.json`.
+
+Server scan:
+
+- Scan: `data/meta-observer/cyborg-dry-run-scan-2026-06-08T04-40-58-526Z.json`
+- Dry-run preflight: `true`
+- Live signal max age: `90000 ms`
+- Timeout: `300000 ms`
+- Executed dry-run candidate: none
+
+Strict-zero candidates blocked by live entry preflight:
+
+- Pool `2RX1NvmfjjePkojfPVDJo1ZEFacmsLDaxUCoMtaFrWwn`: `state_rent_blocked:pool_extend`
+- Pool `2PqzZiA9QJGTCAAsQsZWUrNpxwPZNE3s7b7sdBFbgBkX`: `state_rent_blocked:ata_create`
+
+Other skipped candidates:
+
+- One crowded profile with early buy/interactions.
+- One low-competition profile with non-zero interactions.
+
+Interpretation: the prior modeled-only dry-run evidence was too weak because it assumed candidates were entry-tradable. With the live entry preflight enabled, the current stream produced no tradable strict-zero candidate in the bounded run. Live remains locked. The next valid proof step is more preflight-enabled dry-run scanning, not funded execution.
+
 ## 2026-06-05 Break-Even-Aware Snapshot
 
 Server report:
