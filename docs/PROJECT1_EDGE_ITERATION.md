@@ -1028,6 +1028,14 @@ Code change:
 
 Interpretation: this converts the current target from a manual check into an offline evidence loop. It does not trade, promote, or unlock capital. Its only job is to keep asking whether the target segment has reached enough audited samples to become a paper candidate or has decayed enough to kill.
 
+Server start:
+
+- PM2 app `darwin-replay-gate-monitor` is online.
+- State file: `data/meta-observer/replay-gate-refresh-monitor-state.json`
+- Initial decision: `no_state_record_baseline`
+- Latest target status at startup: `WAIT`
+- Live trading remains locked.
+
 ## 2026-06-05 Break-Even-Aware Snapshot
 
 Server report:
