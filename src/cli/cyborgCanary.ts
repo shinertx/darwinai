@@ -76,6 +76,28 @@ type PoolWatchState = {
   timer: NodeJS.Timeout | null
 }
 
+type CyborgDryRunScanSummary = {
+  startedAtMs: number
+  endedAtMs: number
+  dryRun: true
+  dryRunPreflight: boolean
+  timeoutMs: number
+  strategyConfig: CyborgStrategyConfig
+  skippedLowExitability: Array<{
+    pool: string
+    profile: string
+    score: number
+    blockers: string[]
+    reasons: string[]
+  }>
+  upstreamBlocked: Array<{
+    pool: string
+    profile: string
+    score: number
+    reason: string | null
+  }>
+}
+
 type CanaryResult = {
   observedAtMs: number
   executedAtMs: number
@@ -359,6 +381,15 @@ export function calculateDryRunModeledReturn(
     modeledNetReturnPct,
     modeledNetReturnSol: tradeSizeSol * (modeledNetReturnPct / 100),
   }
+}
+
+function writeDryRunScanSummary(outputDir: string, summary: CyborgDryRunScanSummary): string {
+  const outPath = path.join(
+    outputDir,
+    `cyborg-dry-run-scan-${new Date(summary.endedAtMs).toISOString().replace(/[:.]/g, '-')}.json`
+  )
+  fs.writeFileSync(outPath, JSON.stringify(summary, null, 2) + '\n')
+  return outPath
 }
 
 type TokenBalanceSnapshot = {
@@ -764,6 +795,15 @@ async function main(): Promise<void> {
   const creatorCreateCount = new Map<string, number>()
   const activePools = new Map<string, PoolWatchState>()
   const handledPools = new Set<string>()
+  const dryRunScanSummary: Omit<CyborgDryRunScanSummary, 'endedAtMs'> = {
+    startedAtMs: Date.now(),
+    dryRun: true,
+    dryRunPreflight,
+    timeoutMs,
+    strategyConfig: resolveCyborgStrategyConfig(process.env, shapeConfig, alertWindowMs, executionDeferMs),
+    skippedLowExitability: [],
+    upstreamBlocked: [],
+  }
   let executing = false
   let streamPosition = 0
   let pendingLiveFragment = ''
@@ -840,6 +880,15 @@ async function main(): Promise<void> {
 
           if (!shapeScore.qualified) {
             handledPools.add(state.pool)
+            if (dryRun) {
+              dryRunScanSummary.skippedLowExitability.push({
+                pool: state.pool,
+                profile: shapeScore.profile,
+                score: shapeScore.score,
+                blockers: [...shapeScore.blockers],
+                reasons: [...shapeScore.reasons],
+              })
+            }
             console.log(
               '[CyborgCanary] Skipping low-exitability shape:',
               state.pool,
@@ -862,6 +911,14 @@ async function main(): Promise<void> {
             : await (executor as LiveExecutor).assessEntryTradability(signal, canarySizeSol)
           if (!assessment.tradable) {
             handledPools.add(state.pool)
+            if (dryRun) {
+              dryRunScanSummary.upstreamBlocked.push({
+                pool: state.pool,
+                profile: shapeScore.profile,
+                score: shapeScore.score,
+                reason: assessment.reason || null,
+              })
+            }
             console.log(
               '[CyborgCanary] Skipping upstream-blocked pool:',
               state.pool,
@@ -1013,6 +1070,13 @@ async function main(): Promise<void> {
 
   setTimeout(() => {
     clearInterval(interval)
+    if (dryRun) {
+      const outPath = writeDryRunScanSummary(outputDir, {
+        ...dryRunScanSummary,
+        endedAtMs: Date.now(),
+      })
+      console.log('[CyborgCanary] Dry-run scan summary written:', outPath)
+    }
     console.log('[CyborgCanary] Timed out waiting for a strict unique-creator pool')
     process.exit(2)
   }, timeoutMs)
