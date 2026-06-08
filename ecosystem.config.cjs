@@ -116,7 +116,6 @@ module.exports = {
       name: 'darwin-replay-gate-monitor',
       script: 'dist/cli/pumpswapReplayGateMonitor.js',
       cwd: __dirname,
-      autostart: false,
       stop_exit_codes: [0],
       out_file: 'logs/replay-gate-monitor.out.log',
       error_file: 'logs/replay-gate-monitor.error.log',
