@@ -909,6 +909,53 @@ Best edge-shaped but undersampled segment:
 
 Interpretation: the segment mutation found a better research target, but not a spendable strategy. The strongest adequately sampled rent-safe segment has strong win rate and average return, but its median net is below the required `15%` margin. The segment that clears modeled edge is only `13` pools and remains an overfit risk. Live remains locked. The next valid work is to either collect enough fresh audited samples for the crowded rent-safe segment to reach `20` pools, or add a stronger feature that lifts the median of the 20-plus-pool rent-safe segment above the cost floor.
 
+### Replay Liquidity Segment Grid
+
+Code change:
+
+- Commit: `ea76ca1 Add replay liquidity segment features`
+- Replay paths now record initial SOL liquidity, entry SOL liquidity, and entry liquidity growth before the modeled entry.
+- Replay segments now include initial-liquidity band and entry-liquidity-growth band, in addition to profile, rent eligibility, entry momentum, pre-entry buys, and pre-entry interactions.
+- Tests: local `npm test` passed `79/79`.
+
+Reason: the previous segment grid found rent-safe edge-shaped groups, but the split was still too broad to explain why adequately sampled groups had thin median returns while undersampled groups had stronger returns. Liquidity size and reserve growth are visible before entry and can be replayed without touching live funds.
+
+Fresh current-window audit and replay:
+
+- Rent audit: `data/meta-observer/first-buyer-rent-audit-2026-06-08T06-19-53-021Z.json`
+- Events file: `data/meta-observer/events-2026-06-08T03-29-38-002Z.jsonl`
+- First-buyer pools in window: `159`
+- Transactions found: `159`
+- With pool extension: `17`
+- Without pool extension: `142`
+- Replay grid before liquidity segmentation refresh: `data/meta-observer/replay-path-grid-study-2026-06-08T06-21-09-876Z.json`
+- Liquidity segment replay grid: `data/meta-observer/replay-path-grid-study-2026-06-08T06-26-14-029Z.json`
+- Paper profile candidates: `0`
+- Paper segment candidates: `0`
+
+Fresh current-window liquidity segment result:
+
+- Broad `low_buy_competition`: `77` pools, `72` completed paths, rent-tradable rate `89.61%`, best median modeled net `4.0845%`, blocked by rent rate and modeled-margin thresholds.
+- `strict_zero`: `43` pools, `40` completed paths, best median modeled net `34.6999%`, but rent-tradable rate `0%`, blocked by no rent-free first-buyer evidence.
+- Best small rent-safe liquidity segment: `profile=crowded|rent=yes|initial_liquidity=75_to_125_sol|entry_liquidity_growth=0_to_10_pct|entry_momentum=0_to_10_pct|pre_entry_buys=3_to_5|pre_entry_interactions=11_plus`
+- Small segment result: `6` pools, `5` completed paths, rent-tradable rate `100%`, win rate `100%`, best median modeled net `24.8883%`
+- Blocker: `sample_pools<20`
+
+Combined audited-window liquidity replay:
+
+- Grid: `data/meta-observer/replay-path-grid-study-2026-06-08T06-27-39-748Z.json`
+- Events files: `events-2026-06-05T13-16-06-840Z.jsonl`, `events-2026-06-05T13-44-16-379Z.jsonl`, `events-2026-06-08T03-29-38-002Z.jsonl`
+- Rent audits: `first-buyer-rent-audit-2026-06-05T14-37-06-737Z.json`, `first-buyer-rent-audit-2026-06-05T14-47-04-759Z.json`, `first-buyer-rent-audit-2026-06-08T06-19-53-021Z.json`
+- Paper profile candidates: `0`
+- Paper segment candidates: `0`
+- Broad `low_buy_competition`: `110` pools, `105` completed paths, rent-tradable rate `90.91%`, best median modeled net `5.0402%`, blocked by `median_modeled_net_return_pct<=15`.
+- Best 20-plus-pool rent-safe liquidity segment: `22` pools, rent-tradable rate `100%`, best median modeled net `-0.4795%`, win rate `40.91%`, blocked by modeled-margin and win-rate thresholds.
+- Best small rent-safe liquidity segment: `profile=low_buy_competition|rent=yes|initial_liquidity=75_to_125_sol|entry_liquidity_growth=0_to_10_pct|entry_momentum=0_to_10_pct|pre_entry_buys=1|pre_entry_interactions=6_to_10`
+- Small segment result: `8` pools, `8` completed paths, rent-tradable rate `100%`, win rate `100%`, best median modeled net `16.9084%`
+- Blocker: `sample_pools<20`
+
+Interpretation: liquidity segmentation improved the search target but still did not justify live spending. The best adequately sampled rent-safe liquidity segment is negative. The best positive segment has the right shape but only `8` historical/audited pools. Live remains locked. The next valid work is to keep the observer/audit loop collecting until this exact segment either reaches `20` pools and still clears the strict gate, or decays and gets killed. No funded canary should run from this evidence.
+
 ## 2026-06-05 Break-Even-Aware Snapshot
 
 Server report:
