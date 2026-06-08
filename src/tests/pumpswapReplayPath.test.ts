@@ -155,3 +155,44 @@ test('replay profiles separate early-window sell-only probes from strict-zero po
   assert.equal(report.paths.find((path) => path.pool === 'pool-a')?.profile, 'strict_zero')
   assert.equal(report.paths.find((path) => path.pool === 'pool-b')?.profile, 'sell_only_probe')
 })
+
+test('replay profiles separate rent-seeded low-noise pools from broad low competition', () => {
+  const rows = [
+    ...poolRows('pool-a'),
+    {
+      kind: 'buy',
+      pool: 'pool-a',
+      user: 'seed-buyer',
+      resolvedTimeMs: 2_000,
+      poolBaseReserveRaw: '101000000000',
+      poolQuoteReserveRaw: '99000000',
+      creatorSigner: 'creator',
+    },
+    {
+      kind: 'deposit',
+      pool: 'pool-a',
+      user: 'lp-1',
+      resolvedTimeMs: 3_000,
+      poolBaseReserveRaw: '102000000000',
+      poolQuoteReserveRaw: '98000000',
+      creatorSigner: 'creator',
+    },
+    {
+      kind: 'withdraw',
+      pool: 'pool-a',
+      user: 'lp-2',
+      resolvedTimeMs: 4_000,
+      poolBaseReserveRaw: '103000000000',
+      poolQuoteReserveRaw: '97000000',
+      creatorSigner: 'creator',
+    },
+  ]
+
+  const report = analyzePumpswapReplayPaths(
+    rows,
+    [{ pool: 'pool-a', tradable: true }],
+    OPTIONS
+  )
+
+  assert.equal(report.paths[0].profile, 'rent_seeded_low_noise')
+})
