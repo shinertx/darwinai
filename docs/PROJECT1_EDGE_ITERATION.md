@@ -418,6 +418,19 @@ Best current paper candidate:
 
 Interpretation: this is the first evidence-backed strategy shape worth implementing in canary logic, but it is not live promotion proof. The cyborg canary now records the exit rule in `strategyConfig` and can wait for "10 later buyers or max-hold, then sell" when explicitly configured with `PUMPSWAP_CYBORG_EXIT_AFTER_LATER_BUYS=10` and `PUMPSWAP_CYBORG_MAX_HOLD_MS=60000`. Do not run another paid canary until that exact behavior is paper/shadow verified against fresh observer data.
 
+Dry-run verification command:
+
+```bash
+PUMPSWAP_CYBORG_DRY_RUN=true \
+PUMPSWAP_CYBORG_EXECUTION_DEFER_MS=10000 \
+PUMPSWAP_CYBORG_EXIT_AFTER_LATER_BUYS=10 \
+PUMPSWAP_CYBORG_MAX_HOLD_MS=60000 \
+PUMPSWAP_CYBORG_CANARY_TIMEOUT_MS=300000 \
+npm run run:cyborg:canary
+```
+
+Dry-run artifacts are written as `cyborg-dry-run-*.json` and must not be counted as Promotion Gate loops. They only prove live observer selection plus delayed-exit waiting behavior without opening a wallet position.
+
 ## 2026-06-05 Break-Even-Aware Snapshot
 
 Server report:

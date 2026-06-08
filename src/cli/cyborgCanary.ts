@@ -109,6 +109,33 @@ type CanaryResult = {
   strategyConfig: CyborgStrategyConfig
 }
 
+type CyborgDryRunResult = {
+  observedAtMs: number
+  executedAtMs: number
+  pool: string
+  creator: string
+  createSignature: string
+  mint: string
+  signalType: MarketSignal['type']
+  entryPriceSol: number
+  liquiditySol: number
+  dryRun: true
+  exitRule: CyborgExitRule
+  exitReason: CyborgExitWaitResult['reason']
+  exitObservedLaterBuyWallets: number
+  exitWaitMs: number
+  strictZeroInteraction5s: boolean
+  uniqueCreatorInRun: boolean
+  shapeProfile: string
+  shapeScore: number
+  shapeQualified: boolean
+  shapeReasons: string[]
+  shapeBlockers: string[]
+  estimatedLaterBuyFlowRate: number | null
+  estimatedThreePlusLaterBuyWalletRate: number | null
+  strategyConfig: CyborgStrategyConfig
+}
+
 const WSOL_MINT = 'So11111111111111111111111111111111111111112'
 const DEFAULT_ALERT_WINDOW_MS = 5_000
 const DEFAULT_CANARY_SIZE_SOL = 0.0001
@@ -129,6 +156,14 @@ function parsePositiveInt(value: string | undefined, fallback: number): number {
 function parseNonNegativeInt(value: string | undefined, fallback: number): number {
   const parsed = Number.parseInt(value || '', 10)
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback
+}
+
+function parseBool(value: string | undefined, fallback = false): boolean {
+  if (!value) return fallback
+  const normalized = value.trim().toLowerCase()
+  if (['true', '1', 'yes', 'on'].includes(normalized)) return true
+  if (['false', '0', 'no', 'off'].includes(normalized)) return false
+  return fallback
 }
 
 function resolveCyborgExitRule(env: NodeJS.ProcessEnv = process.env): CyborgExitRule {
@@ -462,6 +497,69 @@ async function executeCanary(
   return result
 }
 
+async function executeDryRunCanary(
+  state: PoolWatchState,
+  outputDir: string,
+  eventsPath: string,
+  shapeScore: CyborgShapeScore,
+  shapeConfig: ReturnType<typeof resolveCyborgShapeScoringConfig>,
+  alertWindowMs: number,
+  executionDeferMs: number,
+  exitRule: CyborgExitRule
+): Promise<CyborgDryRunResult | null> {
+  const nowMs = Date.now()
+  const signal = deriveSignalFromPool(state, nowMs)
+  if (!signal) {
+    console.log('[CyborgCanary] Dry-run skipping non-WSOL or invalid pool:', state.pool)
+    return null
+  }
+
+  const exitStartPosition = fs.statSync(eventsPath).size
+  const exitWait = await waitForCyborgExitRule(eventsPath, state.pool, state.creator, exitStartPosition, exitRule)
+  const result: CyborgDryRunResult = {
+    observedAtMs: state.anchorTimeMs + DEFAULT_ALERT_WINDOW_MS,
+    executedAtMs: Date.now(),
+    pool: state.pool,
+    creator: state.creator,
+    createSignature: state.createSignature,
+    mint: signal.mint,
+    signalType: signal.type,
+    entryPriceSol: signal.priceSol,
+    liquiditySol: signal.liquiditySol,
+    dryRun: true,
+    exitRule,
+    exitReason: exitWait.reason,
+    exitObservedLaterBuyWallets: exitWait.observedLaterBuyWallets,
+    exitWaitMs: exitWait.waitMs,
+    strictZeroInteraction5s: state.buyCompetitorWallets5s.size === 0 && state.interactingWallets5s.size === 0,
+    uniqueCreatorInRun: !shapeScore.blockers.includes('repeat_creator'),
+    shapeProfile: shapeScore.profile,
+    shapeScore: shapeScore.score,
+    shapeQualified: shapeScore.qualified,
+    shapeReasons: [...shapeScore.reasons],
+    shapeBlockers: [...shapeScore.blockers],
+    estimatedLaterBuyFlowRate: shapeScore.estimatedLaterBuyFlowRate,
+    estimatedThreePlusLaterBuyWalletRate: shapeScore.estimatedThreePlusLaterBuyWalletRate,
+    strategyConfig: resolveCyborgStrategyConfig(process.env, shapeConfig, alertWindowMs, executionDeferMs),
+  }
+
+  const outPath = path.join(
+    outputDir,
+    `cyborg-dry-run-${new Date(result.executedAtMs).toISOString().replace(/[:.]/g, '-')}.json`
+  )
+  fs.writeFileSync(outPath, JSON.stringify(result, null, 2) + '\n')
+  console.log('[CyborgCanary] Dry-run result written:', outPath)
+  console.log(
+    '[CyborgCanary] Dry-run exit:',
+    result.exitReason,
+    '| later buys:',
+    result.exitObservedLaterBuyWallets,
+    '| wait ms:',
+    result.exitWaitMs
+  )
+  return result
+}
+
 async function main(): Promise<void> {
   dotenv.config()
   try {
@@ -478,19 +576,23 @@ async function main(): Promise<void> {
   const canarySizeSol = parsePositiveFloat(process.env.PUMPSWAP_CYBORG_CANARY_SIZE_SOL, DEFAULT_CANARY_SIZE_SOL)
   const timeoutMs = parsePositiveInt(process.env.PUMPSWAP_CYBORG_CANARY_TIMEOUT_MS, DEFAULT_TIMEOUT_MS)
   const exitRule = resolveCyborgExitRule(process.env)
+  const dryRun = parseBool(process.env.PUMPSWAP_CYBORG_DRY_RUN, false)
   const outputDir = path.resolve(process.cwd(), process.env.PUMPSWAP_META_OUTPUT_DIR || 'data/meta-observer')
   const eventsDir = outputDir
   const shapeConfig = resolveCyborgShapeScoringConfig(process.env)
   fs.mkdirSync(outputDir, { recursive: true })
 
   const rpcUrl = ((process.env.RPC_URLS || process.env.RPC_URL || '').split(',')[0] || '').trim()
-  if (!rpcUrl) throw new Error('RPC_URL or RPC_URLS not set')
-
-  const wallet = resolveWallet()
-  const connection = new Connection(rpcUrl, 'confirmed')
-  const startingBalanceSol = (await connection.getBalance(wallet.publicKey, 'confirmed')) / 1e9
-  console.log('[CyborgCanary] Wallet:', wallet.publicKey.toBase58())
-  console.log('[CyborgCanary] Starting balance:', startingBalanceSol.toFixed(9), 'SOL')
+  if (!dryRun && !rpcUrl) throw new Error('RPC_URL or RPC_URLS not set')
+  const wallet = dryRun ? null : resolveWallet()
+  const connection = dryRun ? null : new Connection(rpcUrl, 'confirmed')
+  if (wallet && connection) {
+    const startingBalanceSol = (await connection.getBalance(wallet.publicKey, 'confirmed')) / 1e9
+    console.log('[CyborgCanary] Wallet:', wallet.publicKey.toBase58())
+    console.log('[CyborgCanary] Starting balance:', startingBalanceSol.toFixed(9), 'SOL')
+  } else {
+    console.log('[CyborgCanary] Dry-run mode enabled; no wallet position will be opened.')
+  }
   console.log('[CyborgCanary] Canary size:', canarySizeSol.toFixed(6), 'SOL')
   console.log(
     '[CyborgCanary] Shape scorer:',
@@ -507,8 +609,10 @@ async function main(): Promise<void> {
     `laterBuyThreshold=${exitRule.laterBuyThreshold}`,
     `maxHoldMs=${exitRule.maxHoldMs}`
   )
-  console.log('[CyborgCanary] Settlement shadow mode overridden to false for this process')
-  console.log('[CyborgCanary] Settlement routing disabled for this process; using direct RPC submit path')
+  if (!dryRun) {
+    console.log('[CyborgCanary] Settlement shadow mode overridden to false for this process')
+    console.log('[CyborgCanary] Settlement routing disabled for this process; using direct RPC submit path')
+  }
 
   const latestEventsPath = path.join(
     eventsDir,
@@ -558,7 +662,7 @@ async function main(): Promise<void> {
         if (executing) return
         if (handledPools.has(state.pool)) return
         executing = true
-        const executor = new LiveExecutor()
+        const executor = dryRun ? null : new LiveExecutor()
         try {
           const signal = deriveSignalFromPool(state, Date.now())
           if (!signal) {
@@ -604,7 +708,9 @@ async function main(): Promise<void> {
             return
           }
 
-          const assessment = await executor.assessEntryTradability(signal, canarySizeSol)
+          const assessment = dryRun
+            ? { tradable: true, reason: null }
+            : await (executor as LiveExecutor).assessEntryTradability(signal, canarySizeSol)
           if (!assessment.tradable) {
             handledPools.add(state.pool)
             console.log(
@@ -634,22 +740,33 @@ async function main(): Promise<void> {
             '| estimated3Plus:',
             shapeScore.estimatedThreePlusLaterBuyWalletRate?.toFixed(3) ?? 'n/a'
           )
-          const result = await executeCanary(
-            executor,
-            connection,
-            wallet,
-            state,
-            canarySizeSol,
-            outputDir,
-            latestEventsPath,
-            shapeScore,
-            shapeConfig,
-            alertWindowMs,
-            executionDeferMs,
-            exitRule
-          )
+          const result = dryRun
+            ? await executeDryRunCanary(
+              state,
+              outputDir,
+              latestEventsPath,
+              shapeScore,
+              shapeConfig,
+              alertWindowMs,
+              executionDeferMs,
+              exitRule
+            )
+            : await executeCanary(
+              executor as LiveExecutor,
+              connection as Connection,
+              wallet as Keypair,
+              state,
+              canarySizeSol,
+              outputDir,
+              latestEventsPath,
+              shapeScore,
+              shapeConfig,
+              alertWindowMs,
+              executionDeferMs,
+              exitRule
+            )
           if (result) {
-            process.exit(result.flattened ? 0 : 3)
+            process.exit('dryRun' in result ? 0 : (result.flattened ? 0 : 3))
           }
           executing = false
         } catch (error: any) {
