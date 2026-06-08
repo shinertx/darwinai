@@ -35,6 +35,8 @@ type InteractionEventLine = {
   pool: string
   user: string
   resolvedTimeMs: number | null
+  poolBaseReserveRaw?: string
+  poolQuoteReserveRaw?: string
 }
 
 type CyborgExitRule = {
@@ -47,6 +49,14 @@ type CyborgExitWaitResult = {
   reason: 'immediate_sell' | 'later_buy_threshold' | 'max_hold'
   observedLaterBuyWallets: number
   waitMs: number
+  exitPriceSol: number | null
+  exitPriceObservedAtMs: number | null
+}
+
+type PriceSnapshot = {
+  timeMs: number
+  kind: string
+  priceSol: number | null
 }
 
 type PoolWatchState = {
@@ -62,6 +72,7 @@ type PoolWatchState = {
   initialQuoteReserveRaw: bigint
   buyCompetitorWallets5s: Set<string>
   interactingWallets5s: Set<string>
+  priceSnapshots: PriceSnapshot[]
   timer: NodeJS.Timeout | null
 }
 
@@ -117,13 +128,21 @@ type CyborgDryRunResult = {
   createSignature: string
   mint: string
   signalType: MarketSignal['type']
+  sizeSol: number
   entryPriceSol: number
+  exitPriceSol: number | null
   liquiditySol: number
   dryRun: true
+  modeledGrossReturnPct: number | null
+  modeledCostSol: number
+  modeledCostPctOnSize: number
+  modeledNetReturnPct: number | null
+  modeledNetReturnSol: number | null
   exitRule: CyborgExitRule
   exitReason: CyborgExitWaitResult['reason']
   exitObservedLaterBuyWallets: number
   exitWaitMs: number
+  exitPriceObservedAtMs: number | null
   strictZeroInteraction5s: boolean
   uniqueCreatorInRun: boolean
   shapeProfile: string
@@ -141,11 +160,17 @@ const DEFAULT_ALERT_WINDOW_MS = 5_000
 const DEFAULT_CANARY_SIZE_SOL = 0.0001
 const DEFAULT_TIMEOUT_MS = 30 * 60 * 1000
 const DEFAULT_EXECUTION_DEFER_MS = 0
+const DEFAULT_DRY_RUN_FIXED_COST_SOL = 0.000015966
 const TOKEN_FLAT_DUST_RAW = 1_000n
 
 function parsePositiveFloat(value: string | undefined, fallback: number): number {
   const parsed = Number.parseFloat(value || '')
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
+}
+
+function parseNonNegativeFloat(value: string | undefined, fallback: number): number {
+  const parsed = Number.parseFloat(value || '')
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback
 }
 
 function parsePositiveInt(value: string | undefined, fallback: number): number {
@@ -261,6 +286,76 @@ function deriveSignalFromPool(state: PoolWatchState, nowMs: number): MarketSigna
   }
 }
 
+function rawToUi(raw: bigint, decimals: number): number {
+  return Number(raw) / (10 ** decimals)
+}
+
+function priceSolFromReserveRaw(
+  state: Pick<PoolWatchState, 'baseMint' | 'quoteMint' | 'baseMintDecimals' | 'quoteMintDecimals'>,
+  baseReserveRaw: string | bigint | undefined,
+  quoteReserveRaw: string | bigint | undefined
+): number | null {
+  if (baseReserveRaw === undefined || quoteReserveRaw === undefined) return null
+  let baseRaw: bigint
+  let quoteRaw: bigint
+  try {
+    baseRaw = typeof baseReserveRaw === 'bigint' ? baseReserveRaw : BigInt(baseReserveRaw)
+    quoteRaw = typeof quoteReserveRaw === 'bigint' ? quoteReserveRaw : BigInt(quoteReserveRaw)
+  } catch {
+    return null
+  }
+  if (baseRaw <= 0n || quoteRaw <= 0n) return null
+
+  if (state.baseMint === WSOL_MINT && state.quoteMint !== WSOL_MINT) {
+    const sol = rawToUi(baseRaw, state.baseMintDecimals)
+    const token = rawToUi(quoteRaw, state.quoteMintDecimals)
+    return token > 0 ? sol / token : null
+  }
+  if (state.quoteMint === WSOL_MINT && state.baseMint !== WSOL_MINT) {
+    const sol = rawToUi(quoteRaw, state.quoteMintDecimals)
+    const token = rawToUi(baseRaw, state.baseMintDecimals)
+    return token > 0 ? sol / token : null
+  }
+  return null
+}
+
+function latestPriceSnapshotAtOrBefore(snapshots: PriceSnapshot[], timeMs: number): PriceSnapshot | null {
+  let selected: PriceSnapshot | null = null
+  for (const snapshot of snapshots) {
+    if (snapshot.timeMs > timeMs) break
+    if (snapshot.priceSol !== null) selected = snapshot
+  }
+  return selected
+}
+
+export function calculateDryRunModeledReturn(
+  entryPriceSol: number | null,
+  exitPriceSol: number | null,
+  tradeSizeSol: number,
+  fixedCostSol: number
+): Pick<CyborgDryRunResult, 'modeledGrossReturnPct' | 'modeledCostSol' | 'modeledCostPctOnSize' | 'modeledNetReturnPct' | 'modeledNetReturnSol'> {
+  const modeledCostPctOnSize = tradeSizeSol > 0 ? (fixedCostSol / tradeSizeSol) * 100 : 0
+  if (!entryPriceSol || !exitPriceSol || entryPriceSol <= 0 || exitPriceSol <= 0) {
+    return {
+      modeledGrossReturnPct: null,
+      modeledCostSol: fixedCostSol,
+      modeledCostPctOnSize,
+      modeledNetReturnPct: null,
+      modeledNetReturnSol: null,
+    }
+  }
+
+  const modeledGrossReturnPct = ((exitPriceSol / entryPriceSol) - 1) * 100
+  const modeledNetReturnPct = modeledGrossReturnPct - modeledCostPctOnSize
+  return {
+    modeledGrossReturnPct,
+    modeledCostSol: fixedCostSol,
+    modeledCostPctOnSize,
+    modeledNetReturnPct,
+    modeledNetReturnSol: tradeSizeSol * (modeledNetReturnPct / 100),
+  }
+}
+
 type TokenBalanceSnapshot = {
   amountRaw: bigint
   uiAmountString: string
@@ -315,8 +410,7 @@ async function getWalletLamportDeltaSol(
 
 async function waitForCyborgExitRule(
   eventsPath: string,
-  pool: string,
-  creator: string,
+  state: PoolWatchState,
   startPosition: number,
   exitRule: CyborgExitRule
 ): Promise<CyborgExitWaitResult> {
@@ -325,6 +419,8 @@ async function waitForCyborgExitRule(
       reason: 'immediate_sell',
       observedLaterBuyWallets: 0,
       waitMs: 0,
+      exitPriceSol: latestPriceSnapshotAtOrBefore(state.priceSnapshots, Date.now())?.priceSol ?? null,
+      exitPriceObservedAtMs: latestPriceSnapshotAtOrBefore(state.priceSnapshots, Date.now())?.timeMs ?? null,
     }
   }
 
@@ -333,6 +429,8 @@ async function waitForCyborgExitRule(
   const laterBuyWallets = new Set<string>()
   let streamPosition = startPosition
   let pendingFragment = ''
+  let lastExitPriceSol: number | null = latestPriceSnapshotAtOrBefore(state.priceSnapshots, startedAtMs)?.priceSol ?? null
+  let lastExitPriceObservedAtMs: number | null = latestPriceSnapshotAtOrBefore(state.priceSnapshots, startedAtMs)?.timeMs ?? null
 
   while (Date.now() < deadlineMs) {
     const stat = fs.statSync(eventsPath)
@@ -364,14 +462,21 @@ async function waitForCyborgExitRule(
           continue
         }
         if (row.kind !== 'buy') continue
-        if (row.pool !== pool) continue
-        if (row.user === creator) continue
+        if (row.pool !== state.pool) continue
+        const rowPrice = priceSolFromReserveRaw(state, row.poolBaseReserveRaw, row.poolQuoteReserveRaw)
+        if (rowPrice !== null && row.resolvedTimeMs !== null) {
+          lastExitPriceSol = rowPrice
+          lastExitPriceObservedAtMs = row.resolvedTimeMs
+        }
+        if (row.user === state.creator) continue
         laterBuyWallets.add(row.user)
         if (laterBuyWallets.size >= exitRule.laterBuyThreshold) {
           return {
             reason: 'later_buy_threshold',
             observedLaterBuyWallets: laterBuyWallets.size,
             waitMs: Date.now() - startedAtMs,
+            exitPriceSol: rowPrice ?? lastExitPriceSol,
+            exitPriceObservedAtMs: row.resolvedTimeMs ?? lastExitPriceObservedAtMs,
           }
         }
       }
@@ -384,6 +489,8 @@ async function waitForCyborgExitRule(
     reason: 'max_hold',
     observedLaterBuyWallets: laterBuyWallets.size,
     waitMs: Date.now() - startedAtMs,
+    exitPriceSol: lastExitPriceSol,
+    exitPriceObservedAtMs: lastExitPriceObservedAtMs,
   }
 }
 
@@ -428,7 +535,7 @@ async function executeCanary(
   const afterBuyBalanceSol = (await connection.getBalance(wallet.publicKey, 'confirmed')) / 1e9
   const afterBuyToken = await getTokenBalanceSnapshot(connection, wallet.publicKey, mintPk)
   const exitStartPosition = fs.statSync(eventsPath).size
-  const exitWait = await waitForCyborgExitRule(eventsPath, state.pool, state.creator, exitStartPosition, exitRule)
+  const exitWait = await waitForCyborgExitRule(eventsPath, state, exitStartPosition, exitRule)
   const sellSignature = await executor.closePositionNow(position.id, `cyborg_canary_${exitWait.reason}`)
   const afterSellBalanceSol = (await connection.getBalance(wallet.publicKey, 'confirmed')) / 1e9
   const afterSellToken = await getTokenBalanceSnapshot(connection, wallet.publicKey, mintPk)
@@ -499,6 +606,8 @@ async function executeCanary(
 
 async function executeDryRunCanary(
   state: PoolWatchState,
+  canarySizeSol: number,
+  dryRunFixedCostSol: number,
   outputDir: string,
   eventsPath: string,
   shapeScore: CyborgShapeScore,
@@ -515,7 +624,15 @@ async function executeDryRunCanary(
   }
 
   const exitStartPosition = fs.statSync(eventsPath).size
-  const exitWait = await waitForCyborgExitRule(eventsPath, state.pool, state.creator, exitStartPosition, exitRule)
+  const entrySnapshot = latestPriceSnapshotAtOrBefore(state.priceSnapshots, Date.now())
+  const entryPriceSol = entrySnapshot?.priceSol ?? signal.priceSol
+  const exitWait = await waitForCyborgExitRule(eventsPath, state, exitStartPosition, exitRule)
+  const modeledReturn = calculateDryRunModeledReturn(
+    entryPriceSol,
+    exitWait.exitPriceSol,
+    canarySizeSol,
+    dryRunFixedCostSol
+  )
   const result: CyborgDryRunResult = {
     observedAtMs: state.anchorTimeMs + DEFAULT_ALERT_WINDOW_MS,
     executedAtMs: Date.now(),
@@ -524,13 +641,17 @@ async function executeDryRunCanary(
     createSignature: state.createSignature,
     mint: signal.mint,
     signalType: signal.type,
-    entryPriceSol: signal.priceSol,
+    sizeSol: canarySizeSol,
+    entryPriceSol,
+    exitPriceSol: exitWait.exitPriceSol,
     liquiditySol: signal.liquiditySol,
     dryRun: true,
+    ...modeledReturn,
     exitRule,
     exitReason: exitWait.reason,
     exitObservedLaterBuyWallets: exitWait.observedLaterBuyWallets,
     exitWaitMs: exitWait.waitMs,
+    exitPriceObservedAtMs: exitWait.exitPriceObservedAtMs,
     strictZeroInteraction5s: state.buyCompetitorWallets5s.size === 0 && state.interactingWallets5s.size === 0,
     uniqueCreatorInRun: !shapeScore.blockers.includes('repeat_creator'),
     shapeProfile: shapeScore.profile,
@@ -555,7 +676,9 @@ async function executeDryRunCanary(
     '| later buys:',
     result.exitObservedLaterBuyWallets,
     '| wait ms:',
-    result.exitWaitMs
+    result.exitWaitMs,
+    '| modeled net %:',
+    result.modeledNetReturnPct === null ? 'n/a' : result.modeledNetReturnPct.toFixed(4)
   )
   return result
 }
@@ -574,6 +697,10 @@ async function main(): Promise<void> {
   const alertWindowMs = parsePositiveInt(process.env.PUMPSWAP_CYBORG_ALERT_WINDOW_MS, DEFAULT_ALERT_WINDOW_MS)
   const executionDeferMs = parseNonNegativeInt(process.env.PUMPSWAP_CYBORG_EXECUTION_DEFER_MS, DEFAULT_EXECUTION_DEFER_MS)
   const canarySizeSol = parsePositiveFloat(process.env.PUMPSWAP_CYBORG_CANARY_SIZE_SOL, DEFAULT_CANARY_SIZE_SOL)
+  const dryRunFixedCostSol = parseNonNegativeFloat(
+    process.env.PUMPSWAP_CYBORG_DRY_RUN_FIXED_COST_SOL,
+    DEFAULT_DRY_RUN_FIXED_COST_SOL
+  )
   const timeoutMs = parsePositiveInt(process.env.PUMPSWAP_CYBORG_CANARY_TIMEOUT_MS, DEFAULT_TIMEOUT_MS)
   const exitRule = resolveCyborgExitRule(process.env)
   const dryRun = parseBool(process.env.PUMPSWAP_CYBORG_DRY_RUN, false)
@@ -594,6 +721,9 @@ async function main(): Promise<void> {
     console.log('[CyborgCanary] Dry-run mode enabled; no wallet position will be opened.')
   }
   console.log('[CyborgCanary] Canary size:', canarySizeSol.toFixed(6), 'SOL')
+  if (dryRun) {
+    console.log('[CyborgCanary] Dry-run fixed cost proxy:', dryRunFixedCostSol.toFixed(9), 'SOL')
+  }
   console.log(
     '[CyborgCanary] Shape scorer:',
     `minScore=${shapeConfig.minScore}`,
@@ -654,6 +784,16 @@ async function main(): Promise<void> {
         initialQuoteReserveRaw: BigInt(row.initialQuoteReserveRaw || '0'),
         buyCompetitorWallets5s: new Set<string>(),
         interactingWallets5s: new Set<string>(),
+        priceSnapshots: [{
+          timeMs: row.anchorTimeMs,
+          kind: 'create_pool',
+          priceSol: priceSolFromReserveRaw({
+            baseMint: row.baseMint,
+            quoteMint: row.quoteMint,
+            baseMintDecimals: row.baseMintDecimals ?? 9,
+            quoteMintDecimals: row.quoteMintDecimals ?? 9,
+          }, row.initialBaseReserveRaw, row.initialQuoteReserveRaw),
+        }],
         timer: null,
       }
       activePools.set(state.pool, state)
@@ -743,6 +883,8 @@ async function main(): Promise<void> {
           const result = dryRun
             ? await executeDryRunCanary(
               state,
+              canarySizeSol,
+              dryRunFixedCostSol,
               outputDir,
               latestEventsPath,
               shapeScore,
@@ -779,6 +921,15 @@ async function main(): Promise<void> {
 
     const state = activePools.get(row.pool)
     if (!state) return
+    const priceSol = priceSolFromReserveRaw(state, row.poolBaseReserveRaw, row.poolQuoteReserveRaw)
+    if (row.resolvedTimeMs !== null) {
+      state.priceSnapshots.push({
+        timeMs: row.resolvedTimeMs,
+        kind: row.kind,
+        priceSol,
+      })
+      state.priceSnapshots.sort((a, b) => a.timeMs - b.timeMs)
+    }
     if (!isWithinWindow(state.anchorTimeMs, row.resolvedTimeMs, alertWindowMs)) return
     if (row.user === state.creator) return
     state.interactingWallets5s.add(row.user)
