@@ -14,13 +14,13 @@ try {
 const OUTPUT_DIR = path.resolve(process.cwd(), process.env.PUMPSWAP_META_OUTPUT_DIR || 'data/meta-observer')
 
 const DEFAULT_TARGET_SEGMENT_INCLUDES = [
-  'profile=low_buy_competition',
+  'profile=crowded',
   'rent=yes',
   'initial_liquidity=75_to_125_sol',
   'entry_liquidity_growth=0_to_10_pct',
   'entry_momentum=0_to_10_pct',
-  'pre_entry_buys=1',
-  'pre_entry_interactions=6_to_10',
+  'pre_entry_buys=3_to_5',
+  'pre_entry_interactions=11_plus',
 ]
 
 function parsePositiveInt(value: string | undefined, fallback: number): number {
