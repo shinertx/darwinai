@@ -431,6 +431,28 @@ npm run run:cyborg:canary
 
 Dry-run artifacts are written as `cyborg-dry-run-*.json` and must not be counted as Promotion Gate loops. They only prove live observer selection plus delayed-exit waiting behavior without opening a wallet position.
 
+### Fresh Dry-Run Evidence
+
+Server artifact:
+
+- `data/meta-observer/cyborg-dry-run-2026-06-08T04-00-40-155Z.json`
+
+Result:
+
+- Pool: `G552suKEmgYPqoYSVnmgCxHDeEDPXG2X8yJXzhTd8e3Q`
+- Mint: `4RmZQtx4cxMdSkUrZHVh6BBtssrfbt9neoRcRasp7ykQ`
+- Profile: `strict_zero`
+- Shape score: `93`
+- Entry defer: `10000 ms`
+- Exit rule: wait for `10` later non-creator buy wallets, max hold `60000 ms`
+- Exit reason: `later_buy_threshold`
+- Observed later buy wallets at exit: `10`
+- Exit wait: `31770 ms`
+- Dry run: `true`
+- State-rent setup allowed: no ATA create, no pool extension
+
+Interpretation: the replay-backed `strict_zero` delayed-exit candidate can be selected from the fresh live observer stream and can reach its delayed exit condition without opening a wallet position. This is a paper/shadow gate improvement only. It is not live profit proof, not a Promotion Gate loop, and must not be used for capital scaling.
+
 ## 2026-06-05 Break-Even-Aware Snapshot
 
 Server report:
