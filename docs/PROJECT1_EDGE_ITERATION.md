@@ -956,6 +956,35 @@ Combined audited-window liquidity replay:
 
 Interpretation: liquidity segmentation improved the search target but still did not justify live spending. The best adequately sampled rent-safe liquidity segment is negative. The best positive segment has the right shape but only `8` historical/audited pools. Live remains locked. The next valid work is to keep the observer/audit loop collecting until this exact segment either reaches `20` pools and still clears the strict gate, or decays and gets killed. No funded canary should run from this evidence.
 
+### Replay Target Watch Gate
+
+Code change:
+
+- Commit: `8063f17 Add replay target watch gate`
+- Added `npm run analyze:pumpswap:replay-target`.
+- The command reads replay grid artifacts and tracks a configured target segment against deterministic thresholds.
+- Default target segment:
+  - `profile=low_buy_competition`
+  - `rent=yes`
+  - `initial_liquidity=75_to_125_sol`
+  - `entry_liquidity_growth=0_to_10_pct`
+  - `entry_momentum=0_to_10_pct`
+  - `pre_entry_buys=1`
+  - `pre_entry_interactions=6_to_10`
+- Tests: local `npm test` passed `82/82`.
+
+Server target-watch run:
+
+- Artifact: `data/meta-observer/replay-target-watch-2026-06-08T06-32-21-855Z.json`
+- Input grid: `data/meta-observer/replay-path-grid-study-2026-06-08T06-27-39-748Z.json`
+- Status: `WAIT`
+- Matching rows: `120`
+- Candidate rows: `0`
+- Best match: `8` pools, `8` completed paths, `100%` win rate, `16.91%` median modeled net
+- Blockers: `sample_pools<20`, `completed_paths<20`
+
+Interpretation: the target-watch gate makes the current decision explicit and repeatable. This target is not dead, but it is not spendable. It needs at least `20` completed audited replay paths while keeping rent tradability, win rate, median modeled net, and average modeled net above the strict thresholds. Until that happens, live remains locked.
+
 ## 2026-06-05 Break-Even-Aware Snapshot
 
 Server report:
