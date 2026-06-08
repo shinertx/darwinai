@@ -102,3 +102,30 @@ test('replay target preflight can be bypassed only as an explicit diagnostic ove
     assert.equal(result.status, 'TARGET_NOT_FOUND')
   })
 })
+
+test('replay target preflight preserves exact low-competition buy count targets', () => {
+  withTempDir((dir) => {
+    writeTarget(dir, 'replay-target-watch-2026-06-08T00-00-00-000Z.json', {
+      status: 'PAPER_CANDIDATE',
+      candidates: [{ segment: 'profile=low_buy_competition|rent=yes' }],
+      bestMatch: {
+        segment: 'profile=low_buy_competition|rent=yes|initial_liquidity=75_to_125_sol|pre_entry_buys=2|pre_entry_interactions=11_plus',
+        scenarioInputs: {
+          entryDelayMs: 5000,
+          exitAfterLaterBuys: 5,
+          maxHoldMs: 15000,
+        },
+        blockers: [],
+      },
+    })
+
+    const result = evaluateCyborgReplayTargetPreflight({ inputDir: dir })
+
+    assert.equal(result.allowed, true)
+    assert.equal(result.recommendedEnv.PUMPSWAP_CYBORG_SCORER_MIN_SCORE, '58')
+    assert.equal(result.recommendedEnv.PUMPSWAP_CYBORG_SCORER_MIN_BUY_COMPETITORS_5S, '2')
+    assert.equal(result.recommendedEnv.PUMPSWAP_CYBORG_SCORER_MAX_BUY_COMPETITORS_5S, '2')
+    assert.equal(result.recommendedEnv.PUMPSWAP_CYBORG_SCORER_MIN_INTERACTIONS_5S, '11')
+    assert.equal(result.recommendedEnv.PUMPSWAP_CYBORG_SCORER_MIN_LIQUIDITY_SOL, '75')
+  })
+})

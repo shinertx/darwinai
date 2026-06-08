@@ -95,6 +95,14 @@ function buildRecommendedEnv(bestMatch?: ReplayTargetBestMatch | null): Record<s
     env.PUMPSWAP_CYBORG_SCORER_MIN_BUY_COMPETITORS_5S = '3'
     env.PUMPSWAP_CYBORG_SCORER_MAX_BUY_COMPETITORS_5S = '5'
   }
+  if (segmentIncludes(segment, 'pre_entry_buys=2')) {
+    env.PUMPSWAP_CYBORG_SCORER_MIN_BUY_COMPETITORS_5S = '2'
+    env.PUMPSWAP_CYBORG_SCORER_MAX_BUY_COMPETITORS_5S = '2'
+  }
+  if (segmentIncludes(segment, 'pre_entry_buys=1')) {
+    env.PUMPSWAP_CYBORG_SCORER_MIN_BUY_COMPETITORS_5S = '1'
+    env.PUMPSWAP_CYBORG_SCORER_MAX_BUY_COMPETITORS_5S = '1'
+  }
   if (segmentIncludes(segment, 'pre_entry_interactions=11_plus')) {
     env.PUMPSWAP_CYBORG_SCORER_MIN_INTERACTIONS_5S = '11'
     env.PUMPSWAP_CYBORG_SCORER_MAX_INTERACTIONS_5S = '999'

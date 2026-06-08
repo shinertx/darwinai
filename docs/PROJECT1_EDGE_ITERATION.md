@@ -1168,6 +1168,11 @@ Code change:
 
 Interpretation: the offline replay target is closer than before, but the first matching live-shadow target sample was modeled-negative after the fixed-cost proxy. This is not close enough for funded live proof. Live remains locked until a mutated target/config produces clean positive shadow evidence and then separately passes the 20-loop live Promotion Gate.
 
+Follow-on mutation support:
+
+- Replay-target preflight now maps exact `pre_entry_buys=1` and `pre_entry_buys=2` segments into matching live scorer min/max buy-competitor bounds.
+- This lets Darwin shadow-test the next frontier low-competition target without broadening it into the stale generic `0_to_2` low-competition scorer.
+
 ## 2026-06-05 Break-Even-Aware Snapshot
 
 Server report:
