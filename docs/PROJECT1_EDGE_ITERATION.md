@@ -718,6 +718,59 @@ Result:
 
 Interpretation: the longer-hold paper candidate did not survive live-window dry-run evidence either. It reached the later-buyer threshold quickly, but price moved against the modeled entry before costs. The low-competition profile is not promotion-ready under either tested exit variant.
 
+### Fresh Current-Window Frontier and Preflight Recheck
+
+The earlier broad grid was too expensive when it included all historical event files, including the multi-GB June 5 observer file. The current-window replay was rerun explicitly against the active June 8 observer stream.
+
+Fresh current-window rent audit:
+
+- Audit: `data/meta-observer/first-buyer-rent-audit-2026-06-08T05-35-24-070Z.json`
+- Events file: `data/meta-observer/events-2026-06-08T03-29-38-002Z.jsonl`
+- First-buyer pools in window: `136`
+- Transactions found: `136`
+- With pool extension: `12`
+- Without pool extension: `124`
+
+Focused current-window replay grid:
+
+- Grid: `data/meta-observer/replay-path-grid-study-2026-06-08T05-36-14-019Z.json`
+- Scenarios: `120`
+- Cost proxy: `0.000015966 SOL` at `0.0001 SOL` size
+
+Fresh replay result:
+
+- `strict_zero` still shows large modeled returns, but is `BLOCKED` because the refreshed audit gives `0` rent-tradable coverage for that profile. Best strict-zero examples show median modeled net around `34.70%`, win rate `67.65%`, and blocker `no_rent_free_first_buyer_evidence`.
+- Best promotion-aligned paper candidate left: `low_buy_competition`, `entry=5000 ms`, `exitAfterLaterBuys=12`, `maxHold=15000/45000/60000 ms`, `64` pools, `59` completed, `95.31%` rent-tradable rate, `69.49%` win rate, median modeled net `+2.8787%`.
+
+Strict-zero preflight scan:
+
+- Artifact: `data/meta-observer/cyborg-dry-run-scan-2026-06-08T05-34-29-066Z.json`
+- Config: `minScore=70`, `maxBuyCompetitors5s=0`, `maxInteractions5s=0`, `exitAfterLaterBuys=10`, `maxHold=30000 ms`
+- State-rent policy: ATA create allowed, pool extension blocked, close token ATA on sell enabled
+- Executed dry-run candidate: none
+- Skipped low-exitability candidates: `6`
+- Upstream-blocked candidates: `7`
+- Upstream blocker: all `7` were `state_rent_blocked:pool_extend`
+
+Low-competition exit-12 preflight dry-run:
+
+- Artifact: `data/meta-observer/cyborg-dry-run-2026-06-08T05-42-16-304Z.json`
+- Config: `minScore=58`, `maxBuyCompetitors5s=1`, `maxInteractions5s=12`, `exitAfterLaterBuys=12`, `maxHold=15000 ms`
+- Entry tradability preflight: `tradable=true`
+- Pool: `GcgNfoq7hHCYq1vYifANbtoXv1KdgMSLNeferd5hW1sQ`
+- Mint: `DJfxEAEc8JU1Jf4yajYwi4Qma5Jb2qgYmxkoUctEpump`
+- Profile: `low_competition`
+- Shape score: `70`
+- Exit reason: `max_hold`
+- Later buy wallets observed: `8`
+- Exit wait: `15090 ms`
+- Modeled gross return: `-1.0336084969648773%`
+- Modeled cost on `0.0001 SOL` size: `15.966%`
+- Modeled net return: `-16.999608496964875%`
+- Modeled net SOL at `0.0001 SOL` size: `-0.000016999608496964877 SOL`
+
+Interpretation: the current-window search found no promotion-ready path. Strict-zero has modeled edge but repeatedly fails live entry eligibility under the no-pool-extension rule. The only current rent-tradable paper candidate has thin replay edge and produced another negative preflight dry-run. Live remains locked; the next strategy/search rewrite should either predict and avoid pool-extension-required strict-zero pools before preflight, or search for a materially stronger no-pool-extension profile than low competition.
+
 ## 2026-06-05 Break-Even-Aware Snapshot
 
 Server report:
