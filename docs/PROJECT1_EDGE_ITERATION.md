@@ -630,6 +630,42 @@ Result:
 
 Interpretation: promotion-aligned preflight can find an entry-tradable strict-zero candidate when ATA creation is allowed and close-on-sell is enabled, but the first such candidate was modeled-negative after the fixed-cost proxy. This is a stronger stop signal than the entry-blocked scans: the current strategy is not ready for funded canary even under the promotion-batch state-rent policy.
 
+### Wider Replay Candidate and Low-Competition Dry-Run Scan
+
+Server replay refresh:
+
+- Rent audit: `data/meta-observer/first-buyer-rent-audit-2026-06-08T04-53-44-015Z.json`
+- Replay grid: `data/meta-observer/replay-path-grid-study-2026-06-08T04-54-16-761Z.json`
+- Scope: `161` first-buyer pools checked; `142` without pool extension; `19` with pool extension.
+
+Best paper candidates from the wider grid:
+
+- `low_buy_competition`, `entry=5000 ms`, `exitAfterLaterBuys=9`, `maxHold=45000/60000 ms`: `35` pools, `32` completed, `97.14%` rent-safe rate, `75.0%` win rate, `+3.63%` median modeled net, `+8.03%` average modeled net, status `PAPER_CANDIDATE`.
+- `low_buy_competition`, `entry=5000 ms`, `exitAfterLaterBuys=3`, `maxHold=15000-60000 ms`: `35` pools, `71.9%` win rate, `+5.21%` median modeled net, `+23.66%` average modeled net, status `PAPER_CANDIDATE`.
+- `strict_zero`, `entry=5000 ms`, `exitAfterLaterBuys=12`, `maxHold=15000/30000/45000 ms`: `20` pools, `70.0%` win rate, `+51.29%` median modeled net, `+49.16%` average modeled net, `95.0%` rent-safe rate, status `PAPER_CANDIDATE`.
+
+Strict-zero mutation dry-run:
+
+- Artifact: `data/meta-observer/cyborg-dry-run-2026-06-08T04-57-15-303Z.json`
+- Entry tradability preflight: `tradable=true`
+- Profile: `strict_zero`
+- Exit rule: `exitAfterLaterBuys=12`, `maxHold=15000 ms`
+- Exit wait: `4014 ms`
+- Modeled gross return: `0.2388%`
+- Modeled net return: `-15.727%`
+
+Latest low-competition dry-run scan:
+
+- Artifact: `data/meta-observer/cyborg-dry-run-scan-2026-06-08T05-07-02-256Z.json`
+- Timeout: `300000 ms`
+- Config: `maxBuyCompetitors5s=1`, `maxInteractions5s=2`, `exitAfterLaterBuys=3`, `maxHold=15000 ms`, ATA create allowed, pool extension blocked.
+- Executed dry-run candidate: none
+- Skipped low-exitability candidates: `16`
+- Upstream-blocked candidates: `2`
+- Upstream blocker reasons: `state_rent_blocked:pool_extend`, `state_rent_blocked:pool_extend`
+
+Interpretation: the wider replay found paper candidates, but the first strict-zero mutation turned negative under current modeled costs, and the first low-competition live scan could not produce a preflight-tradable, sufficiently clean candidate inside five minutes. The current evidence supports more paper/preflight iteration, not funded live trading.
+
 ## 2026-06-05 Break-Even-Aware Snapshot
 
 Server report:
