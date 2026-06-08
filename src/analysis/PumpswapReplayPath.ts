@@ -59,6 +59,9 @@ export type ReplayPathResult = {
   buyCompetitorWallets10s: number
   preEntryBuyWallets: number
   preEntryInteractingWallets: number
+  initialLiquiditySol: number | null
+  entryLiquiditySol: number | null
+  entryLiquidityGrowthPct: number | null
   entryMomentumPct: number | null
   entryTimeMs: number
   exitTimeMs: number | null
@@ -112,6 +115,7 @@ type Snapshot = {
   kind: string
   user: string | null
   priceSolPerToken: number | null
+  liquiditySol: number | null
 }
 
 type PoolState = {
@@ -184,6 +188,25 @@ function priceSolPerToken(
   return null
 }
 
+function liquiditySol(
+  pool: Pick<PoolState, 'baseMint' | 'quoteMint' | 'baseMintDecimals' | 'quoteMintDecimals'>,
+  baseReserveRaw: string | undefined,
+  quoteReserveRaw: string | undefined
+): number | null {
+  const baseRaw = toBigInt(baseReserveRaw)
+  const quoteRaw = toBigInt(quoteReserveRaw)
+  if (baseRaw === null || quoteRaw === null) return null
+  if (baseRaw <= 0n || quoteRaw <= 0n) return null
+
+  if (pool.baseMint === WSOL_MINT && pool.quoteMint !== WSOL_MINT) {
+    return rawToUi(baseRaw, pool.baseMintDecimals)
+  }
+  if (pool.quoteMint === WSOL_MINT && pool.baseMint !== WSOL_MINT) {
+    return rawToUi(quoteRaw, pool.quoteMintDecimals)
+  }
+  return null
+}
+
 function createPoolState(row: PumpSwapReplayEvent): PoolState | null {
   if (!row.pool || row.anchorTimeMs === null || row.anchorTimeMs === undefined) return null
   const pool: PoolState = {
@@ -207,6 +230,7 @@ function createPoolState(row: PumpSwapReplayEvent): PoolState | null {
     kind: 'create_pool',
     user: pool.creatorSigner,
     priceSolPerToken: priceSolPerToken(pool, pool.initialBaseReserveRaw, pool.initialQuoteReserveRaw),
+    liquiditySol: liquiditySol(pool, pool.initialBaseReserveRaw, pool.initialQuoteReserveRaw),
   })
   return pool
 }
@@ -268,6 +292,7 @@ function ingestReplayEvent(pools: Map<string, PoolState>, row: PumpSwapReplayEve
     kind: row.kind,
     user,
     priceSolPerToken: priceSolPerToken(pool, row.poolBaseReserveRaw, row.poolQuoteReserveRaw),
+    liquiditySol: liquiditySol(pool, row.poolBaseReserveRaw, row.poolQuoteReserveRaw),
   })
 }
 
@@ -290,7 +315,7 @@ function snapshotAtOrBefore(snapshots: Snapshot[], timeMs: number): Snapshot | n
   let selected: Snapshot | null = null
   for (const snapshot of snapshots) {
     if (snapshot.timeMs > timeMs) break
-    if (snapshot.priceSolPerToken !== null) selected = snapshot
+    if (snapshot.priceSolPerToken !== null || snapshot.liquiditySol !== null) selected = snapshot
   }
   return selected
 }
@@ -373,6 +398,9 @@ function replayPool(
     buyCompetitorWallets10s: pool.buyCompetitorWallets10s.size,
     preEntryBuyWallets: preEntry.preEntryBuyWallets,
     preEntryInteractingWallets: preEntry.preEntryInteractingWallets,
+    initialLiquiditySol: anchorSnapshot?.liquiditySol ?? null,
+    entryLiquiditySol: entrySnapshot?.liquiditySol ?? null,
+    entryLiquidityGrowthPct: pctChange(anchorSnapshot?.liquiditySol, entrySnapshot?.liquiditySol),
     entryMomentumPct: pctChange(anchorSnapshot?.priceSolPerToken, entrySnapshot?.priceSolPerToken),
     entryTimeMs,
     exitTimeMs: exitSnapshot?.timeMs ?? null,
@@ -397,18 +425,30 @@ function countBand(value: number): string {
 
 function momentumBand(value: number | null): string {
   if (value === null) return 'missing'
-  if (value <= -25) return 'lte_neg25_pct'
-  if (value <= 0) return 'neg25_to_0_pct'
-  if (value <= 10) return '0_to_10_pct'
-  if (value <= 25) return '10_to_25_pct'
-  if (value <= 50) return '25_to_50_pct'
+  const epsilon = 0.000001
+  if (value <= -25 + epsilon) return 'lte_neg25_pct'
+  if (value <= 0 + epsilon) return 'neg25_to_0_pct'
+  if (value <= 10 + epsilon) return '0_to_10_pct'
+  if (value <= 25 + epsilon) return '10_to_25_pct'
+  if (value <= 50 + epsilon) return '25_to_50_pct'
   return 'gt_50_pct'
+}
+
+function liquidityBand(value: number | null): string {
+  if (value === null) return 'missing'
+  if (value < 20) return 'lt_20_sol'
+  if (value < 40) return '20_to_40_sol'
+  if (value < 75) return '40_to_75_sol'
+  if (value < 125) return '75_to_125_sol'
+  return 'gte_125_sol'
 }
 
 function segmentKey(path: ReplayPathResult): string {
   return [
     `profile=${path.profile}`,
     `rent=${path.rentTradable ? 'yes' : 'no'}`,
+    `initial_liquidity=${liquidityBand(path.initialLiquiditySol)}`,
+    `entry_liquidity_growth=${momentumBand(path.entryLiquidityGrowthPct)}`,
     `entry_momentum=${momentumBand(path.entryMomentumPct)}`,
     `pre_entry_buys=${countBand(path.preEntryBuyWallets)}`,
     `pre_entry_interactions=${countBand(path.preEntryInteractingWallets)}`,
