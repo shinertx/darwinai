@@ -425,11 +425,12 @@ PUMPSWAP_CYBORG_DRY_RUN=true \
 PUMPSWAP_CYBORG_EXECUTION_DEFER_MS=10000 \
 PUMPSWAP_CYBORG_EXIT_AFTER_LATER_BUYS=10 \
 PUMPSWAP_CYBORG_MAX_HOLD_MS=60000 \
+PUMPSWAP_CYBORG_DRY_RUN_FIXED_COST_SOL=0.000015966 \
 PUMPSWAP_CYBORG_CANARY_TIMEOUT_MS=300000 \
 npm run run:cyborg:canary
 ```
 
-Dry-run artifacts are written as `cyborg-dry-run-*.json` and must not be counted as Promotion Gate loops. They only prove live observer selection plus delayed-exit waiting behavior without opening a wallet position.
+Dry-run artifacts are written as `cyborg-dry-run-*.json` and must not be counted as Promotion Gate loops. They only prove live observer selection, delayed-exit waiting behavior, and modeled reserve-snapshot economics without opening a wallet position.
 
 ### Fresh Dry-Run Evidence
 
@@ -452,6 +453,34 @@ Result:
 - State-rent setup allowed: no ATA create, no pool extension
 
 Interpretation: the replay-backed `strict_zero` delayed-exit candidate can be selected from the fresh live observer stream and can reach its delayed exit condition without opening a wallet position. This is a paper/shadow gate improvement only. It is not live profit proof, not a Promotion Gate loop, and must not be used for capital scaling.
+
+### Fresh Modeled Dry-Run Evidence
+
+Server artifact:
+
+- `data/meta-observer/cyborg-dry-run-2026-06-08T04-07-09-068Z.json`
+
+Result:
+
+- Pool: `41gcoATtgFGoMxwTRtGwGHDJWkiaEikX1Qo1q44hsiX7`
+- Mint: `Fcxktk2nkQ16nhcu9C3q5oeT41QbmKZMWwVZjsnoAHSY`
+- Profile: `strict_zero`
+- Shape score: `93`
+- Entry defer: `10000 ms`
+- Exit rule: wait for `10` later non-creator buy wallets, max hold `60000 ms`
+- Exit reason: `later_buy_threshold`
+- Observed later buy wallets at exit: `10`
+- Exit wait: `16066 ms`
+- Modeled entry price: `0.00006011890684369555 SOL`
+- Modeled exit price: `0.00008863923232662902 SOL`
+- Modeled gross return: `47.43986040378958%`
+- Modeled fixed cost: `0.000015966 SOL`
+- Modeled net return: `31.47386040378958%`
+- Modeled net SOL at `0.0001 SOL` size: `0.00003147386040378958 SOL`
+- Dry run: `true`
+- State-rent setup allowed: no ATA create, no pool extension
+
+Interpretation: the fresh live stream produced one non-trading sample whose reserve-snapshot path would have cleared the rent-safe fixed-cost proxy. This is stronger than the prior dry run because it records modeled entry, modeled exit, gross return, cost proxy, and modeled net. It is still not Promotion Gate proof because no real buy, real sell, wallet delta, finality check, or flattening occurred.
 
 ## 2026-06-05 Break-Even-Aware Snapshot
 
