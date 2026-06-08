@@ -422,6 +422,7 @@ Dry-run verification command:
 
 ```bash
 PUMPSWAP_CYBORG_DRY_RUN=true \
+PUMPSWAP_CYBORG_DRY_RUN_PREFLIGHT=true \
 PUMPSWAP_CYBORG_EXECUTION_DEFER_MS=10000 \
 PUMPSWAP_CYBORG_EXIT_AFTER_LATER_BUYS=10 \
 PUMPSWAP_CYBORG_MAX_HOLD_MS=60000 \
@@ -430,7 +431,7 @@ PUMPSWAP_CYBORG_CANARY_TIMEOUT_MS=300000 \
 npm run run:cyborg:canary
 ```
 
-Dry-run artifacts are written as `cyborg-dry-run-*.json` and must not be counted as Promotion Gate loops. They only prove live observer selection, delayed-exit waiting behavior, and modeled reserve-snapshot economics without opening a wallet position.
+Dry-run artifacts are written as `cyborg-dry-run-*.json` and must not be counted as Promotion Gate loops. They only prove live observer selection, optional non-trading entry tradability preflight, delayed-exit waiting behavior, and modeled reserve-snapshot economics without opening a wallet position.
 
 ### Fresh Dry-Run Evidence
 

@@ -138,6 +138,11 @@ type CyborgDryRunResult = {
   modeledCostPctOnSize: number
   modeledNetReturnPct: number | null
   modeledNetReturnSol: number | null
+  entryTradabilityPreflight: {
+    checked: boolean
+    tradable: boolean | null
+    reason: string | null
+  }
   exitRule: CyborgExitRule
   exitReason: CyborgExitWaitResult['reason']
   exitObservedLaterBuyWallets: number
@@ -608,6 +613,7 @@ async function executeDryRunCanary(
   state: PoolWatchState,
   canarySizeSol: number,
   dryRunFixedCostSol: number,
+  entryTradabilityPreflight: CyborgDryRunResult['entryTradabilityPreflight'],
   outputDir: string,
   eventsPath: string,
   shapeScore: CyborgShapeScore,
@@ -647,6 +653,7 @@ async function executeDryRunCanary(
     liquiditySol: signal.liquiditySol,
     dryRun: true,
     ...modeledReturn,
+    entryTradabilityPreflight,
     exitRule,
     exitReason: exitWait.reason,
     exitObservedLaterBuyWallets: exitWait.observedLaterBuyWallets,
@@ -704,6 +711,7 @@ async function main(): Promise<void> {
   const timeoutMs = parsePositiveInt(process.env.PUMPSWAP_CYBORG_CANARY_TIMEOUT_MS, DEFAULT_TIMEOUT_MS)
   const exitRule = resolveCyborgExitRule(process.env)
   const dryRun = parseBool(process.env.PUMPSWAP_CYBORG_DRY_RUN, false)
+  const dryRunPreflight = dryRun && parseBool(process.env.PUMPSWAP_CYBORG_DRY_RUN_PREFLIGHT, false)
   const outputDir = path.resolve(process.cwd(), process.env.PUMPSWAP_META_OUTPUT_DIR || 'data/meta-observer')
   const eventsDir = outputDir
   const shapeConfig = resolveCyborgShapeScoringConfig(process.env)
@@ -723,6 +731,7 @@ async function main(): Promise<void> {
   console.log('[CyborgCanary] Canary size:', canarySizeSol.toFixed(6), 'SOL')
   if (dryRun) {
     console.log('[CyborgCanary] Dry-run fixed cost proxy:', dryRunFixedCostSol.toFixed(9), 'SOL')
+    console.log('[CyborgCanary] Dry-run entry preflight:', dryRunPreflight ? 'enabled' : 'disabled')
   }
   console.log(
     '[CyborgCanary] Shape scorer:',
@@ -802,7 +811,7 @@ async function main(): Promise<void> {
         if (executing) return
         if (handledPools.has(state.pool)) return
         executing = true
-        const executor = dryRun ? null : new LiveExecutor()
+        const executor = (!dryRun || dryRunPreflight) ? new LiveExecutor() : null
         try {
           const signal = deriveSignalFromPool(state, Date.now())
           if (!signal) {
@@ -848,7 +857,7 @@ async function main(): Promise<void> {
             return
           }
 
-          const assessment = dryRun
+          const assessment = dryRun && !dryRunPreflight
             ? { tradable: true, reason: null }
             : await (executor as LiveExecutor).assessEntryTradability(signal, canarySizeSol)
           if (!assessment.tradable) {
@@ -885,6 +894,11 @@ async function main(): Promise<void> {
               state,
               canarySizeSol,
               dryRunFixedCostSol,
+              {
+                checked: dryRunPreflight,
+                tradable: dryRunPreflight ? assessment.tradable : null,
+                reason: dryRunPreflight ? assessment.reason : null,
+              },
               outputDir,
               latestEventsPath,
               shapeScore,
