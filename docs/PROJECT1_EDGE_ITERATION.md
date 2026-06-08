@@ -692,6 +692,32 @@ Result:
 
 Interpretation: relaxing the scorer to the low-competition paper profile did produce a preflight-tradable candidate without pool extension, but the first executed dry-run was clearly negative after the fixed-cost proxy. This config cannot justify funded live canary without stronger repeated dry-run evidence or a materially lower cost floor.
 
+### Longer-Hold Low-Competition Preflight Dry-Run
+
+Server dry-run:
+
+- Artifact: `data/meta-observer/cyborg-dry-run-2026-06-08T05-13-53-755Z.json`
+- Config: `minScore=58`, `maxBuyCompetitors5s=1`, `maxInteractions5s=12`, `exitAfterLaterBuys=9`, `maxHold=45000 ms`
+- State-rent policy: ATA create allowed, pool extension blocked, close token ATA on sell enabled
+- Entry tradability preflight: `tradable=true`
+
+Result:
+
+- Pool: `D5Kfm145rqLvk24D9THg1b5ZUJayY4kE6ubFXiiPPaSW`
+- Mint: `HJYvThMadW7ojhRQJNU3icyixnYg5P5mx33DarUG3LTk`
+- Profile: `low_competition`
+- Shape score: `58`
+- Exit reason: `later_buy_threshold`
+- Later buy wallets observed: `9`
+- Exit wait: `9573 ms`
+- Modeled gross return: `-23.593046669534278%`
+- Modeled fixed cost: `0.000015966 SOL`
+- Modeled cost on `0.0001 SOL` size: `15.966%`
+- Modeled net return: `-39.559046669534276%`
+- Modeled net SOL at `0.0001 SOL` size: `-0.00003955904666953428 SOL`
+
+Interpretation: the longer-hold paper candidate did not survive live-window dry-run evidence either. It reached the later-buyer threshold quickly, but price moved against the modeled entry before costs. The low-competition profile is not promotion-ready under either tested exit variant.
+
 ## 2026-06-05 Break-Even-Aware Snapshot
 
 Server report:
