@@ -37,6 +37,18 @@ type InteractionEventLine = {
   resolvedTimeMs: number | null
 }
 
+type CyborgExitRule = {
+  mode: 'immediate' | 'later_buy_threshold'
+  laterBuyThreshold: number
+  maxHoldMs: number
+}
+
+type CyborgExitWaitResult = {
+  reason: 'immediate_sell' | 'later_buy_threshold' | 'max_hold'
+  observedLaterBuyWallets: number
+  waitMs: number
+}
+
 type PoolWatchState = {
   pool: string
   creator: string
@@ -81,6 +93,10 @@ type CanaryResult = {
   netReturnSource: 'tx_deltas' | 'balance_snapshot'
   buySignature: string | null
   sellSignature: string | null
+  exitRule: CyborgExitRule
+  exitReason: CyborgExitWaitResult['reason']
+  exitObservedLaterBuyWallets: number
+  exitWaitMs: number
   strictZeroInteraction5s: boolean
   uniqueCreatorInRun: boolean
   shapeProfile: string
@@ -113,6 +129,23 @@ function parsePositiveInt(value: string | undefined, fallback: number): number {
 function parseNonNegativeInt(value: string | undefined, fallback: number): number {
   const parsed = Number.parseInt(value || '', 10)
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback
+}
+
+function resolveCyborgExitRule(env: NodeJS.ProcessEnv = process.env): CyborgExitRule {
+  const laterBuyThreshold = parseNonNegativeInt(env.PUMPSWAP_CYBORG_EXIT_AFTER_LATER_BUYS, 0)
+  const maxHoldMs = parseNonNegativeInt(env.PUMPSWAP_CYBORG_MAX_HOLD_MS, 0)
+  if (laterBuyThreshold > 0 && maxHoldMs > 0) {
+    return {
+      mode: 'later_buy_threshold',
+      laterBuyThreshold,
+      maxHoldMs,
+    }
+  }
+  return {
+    mode: 'immediate',
+    laterBuyThreshold: 0,
+    maxHoldMs: 0,
+  }
 }
 
 function resolveWallet(): Keypair {
@@ -245,6 +278,80 @@ async function getWalletLamportDeltaSol(
   return (post - pre) / 1e9
 }
 
+async function waitForCyborgExitRule(
+  eventsPath: string,
+  pool: string,
+  creator: string,
+  startPosition: number,
+  exitRule: CyborgExitRule
+): Promise<CyborgExitWaitResult> {
+  if (exitRule.mode === 'immediate') {
+    return {
+      reason: 'immediate_sell',
+      observedLaterBuyWallets: 0,
+      waitMs: 0,
+    }
+  }
+
+  const startedAtMs = Date.now()
+  const deadlineMs = startedAtMs + exitRule.maxHoldMs
+  const laterBuyWallets = new Set<string>()
+  let streamPosition = startPosition
+  let pendingFragment = ''
+
+  while (Date.now() < deadlineMs) {
+    const stat = fs.statSync(eventsPath)
+    if (stat.size > streamPosition) {
+      const chunk = await new Promise<string>((resolve, reject) => {
+        const stream = fs.createReadStream(eventsPath, {
+          start: streamPosition,
+          end: stat.size - 1,
+          encoding: 'utf8',
+        })
+        let buffer = ''
+        stream.on('data', (data: string | Buffer) => {
+          buffer += typeof data === 'string' ? data : data.toString('utf8')
+        })
+        stream.on('error', reject)
+        stream.on('end', () => resolve(buffer))
+      })
+
+      streamPosition = stat.size
+      const rows = (pendingFragment + chunk).split('\n')
+      pendingFragment = rows.pop() || ''
+
+      for (const line of rows) {
+        if (!line) continue
+        let row: InteractionEventLine | CreatePoolEventLine
+        try {
+          row = JSON.parse(line) as InteractionEventLine | CreatePoolEventLine
+        } catch {
+          continue
+        }
+        if (row.kind !== 'buy') continue
+        if (row.pool !== pool) continue
+        if (row.user === creator) continue
+        laterBuyWallets.add(row.user)
+        if (laterBuyWallets.size >= exitRule.laterBuyThreshold) {
+          return {
+            reason: 'later_buy_threshold',
+            observedLaterBuyWallets: laterBuyWallets.size,
+            waitMs: Date.now() - startedAtMs,
+          }
+        }
+      }
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 500))
+  }
+
+  return {
+    reason: 'max_hold',
+    observedLaterBuyWallets: laterBuyWallets.size,
+    waitMs: Date.now() - startedAtMs,
+  }
+}
+
 async function executeCanary(
   executor: LiveExecutor,
   connection: Connection,
@@ -252,10 +359,12 @@ async function executeCanary(
   state: PoolWatchState,
   canarySizeSol: number,
   outputDir: string,
+  eventsPath: string,
   shapeScore: CyborgShapeScore,
   shapeConfig: ReturnType<typeof resolveCyborgShapeScoringConfig>,
   alertWindowMs: number,
-  executionDeferMs: number
+  executionDeferMs: number,
+  exitRule: CyborgExitRule
 ): Promise<CanaryResult | null> {
   const nowMs = Date.now()
   const signal = deriveSignalFromPool(state, nowMs)
@@ -283,7 +392,9 @@ async function executeCanary(
 
   const afterBuyBalanceSol = (await connection.getBalance(wallet.publicKey, 'confirmed')) / 1e9
   const afterBuyToken = await getTokenBalanceSnapshot(connection, wallet.publicKey, mintPk)
-  const sellSignature = await executor.closePositionNow(position.id, 'cyborg_canary_immediate_sell')
+  const exitStartPosition = fs.statSync(eventsPath).size
+  const exitWait = await waitForCyborgExitRule(eventsPath, state.pool, state.creator, exitStartPosition, exitRule)
+  const sellSignature = await executor.closePositionNow(position.id, `cyborg_canary_${exitWait.reason}`)
   const afterSellBalanceSol = (await connection.getBalance(wallet.publicKey, 'confirmed')) / 1e9
   const afterSellToken = await getTokenBalanceSnapshot(connection, wallet.publicKey, mintPk)
   const residualTokenAmountRaw = afterSellToken.amountRaw - beforeToken.amountRaw
@@ -323,6 +434,10 @@ async function executeCanary(
     netReturnSource: txDeltaNetReturnSol !== null ? 'tx_deltas' : 'balance_snapshot',
     buySignature: position.entrySignature || null,
     sellSignature,
+    exitRule,
+    exitReason: exitWait.reason,
+    exitObservedLaterBuyWallets: exitWait.observedLaterBuyWallets,
+    exitWaitMs: exitWait.waitMs,
     strictZeroInteraction5s: state.buyCompetitorWallets5s.size === 0 && state.interactingWallets5s.size === 0,
     uniqueCreatorInRun: !shapeScore.blockers.includes('repeat_creator'),
     shapeProfile: shapeScore.profile,
@@ -362,6 +477,7 @@ async function main(): Promise<void> {
   const executionDeferMs = parseNonNegativeInt(process.env.PUMPSWAP_CYBORG_EXECUTION_DEFER_MS, DEFAULT_EXECUTION_DEFER_MS)
   const canarySizeSol = parsePositiveFloat(process.env.PUMPSWAP_CYBORG_CANARY_SIZE_SOL, DEFAULT_CANARY_SIZE_SOL)
   const timeoutMs = parsePositiveInt(process.env.PUMPSWAP_CYBORG_CANARY_TIMEOUT_MS, DEFAULT_TIMEOUT_MS)
+  const exitRule = resolveCyborgExitRule(process.env)
   const outputDir = path.resolve(process.cwd(), process.env.PUMPSWAP_META_OUTPUT_DIR || 'data/meta-observer')
   const eventsDir = outputDir
   const shapeConfig = resolveCyborgShapeScoringConfig(process.env)
@@ -384,6 +500,12 @@ async function main(): Promise<void> {
     `minLiquiditySol=${shapeConfig.minLiquiditySol.toFixed(2)}`,
     `requireUniqueCreator=${shapeConfig.requireUniqueCreator}`,
     `executionDeferMs=${executionDeferMs}`
+  )
+  console.log(
+    '[CyborgCanary] Exit rule:',
+    `mode=${exitRule.mode}`,
+    `laterBuyThreshold=${exitRule.laterBuyThreshold}`,
+    `maxHoldMs=${exitRule.maxHoldMs}`
   )
   console.log('[CyborgCanary] Settlement shadow mode overridden to false for this process')
   console.log('[CyborgCanary] Settlement routing disabled for this process; using direct RPC submit path')
@@ -519,10 +641,12 @@ async function main(): Promise<void> {
             state,
             canarySizeSol,
             outputDir,
+            latestEventsPath,
             shapeScore,
             shapeConfig,
             alertWindowMs,
-            executionDeferMs
+            executionDeferMs,
+            exitRule
           )
           if (result) {
             process.exit(result.flattened ? 0 : 3)

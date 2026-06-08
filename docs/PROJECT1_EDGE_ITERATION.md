@@ -416,7 +416,7 @@ Best current paper candidate:
 - Median modeled net return: `26.51%`
 - Status: `PAPER_CANDIDATE`
 
-Interpretation: this is the first evidence-backed strategy shape worth implementing in canary logic, but it is not live promotion proof. The current cyborg canary sells immediately after buy, so it does not implement this replay assumption. Do not run another paid canary until cyborg exit logic supports "wait for 10 later buyers or max-hold, then sell" and that behavior is paper/shadow verified.
+Interpretation: this is the first evidence-backed strategy shape worth implementing in canary logic, but it is not live promotion proof. The cyborg canary now records the exit rule in `strategyConfig` and can wait for "10 later buyers or max-hold, then sell" when explicitly configured with `PUMPSWAP_CYBORG_EXIT_AFTER_LATER_BUYS=10` and `PUMPSWAP_CYBORG_MAX_HOLD_MS=60000`. Do not run another paid canary until that exact behavior is paper/shadow verified against fresh observer data.
 
 ## 2026-06-05 Break-Even-Aware Snapshot
 

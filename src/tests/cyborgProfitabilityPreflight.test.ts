@@ -19,6 +19,11 @@ const BASE_CONFIG: CyborgStrategyConfig = {
   alertWindowMs: 5_000,
   executionDeferMs: 15_000,
   liveSignalMaxAgeMs: '90000',
+  exitRule: {
+    mode: 'immediate',
+    laterBuyThreshold: 0,
+    maxHoldMs: 0,
+  },
   allowedStateRentSetup: {
     ataCreate: true,
     poolExtend: false,
