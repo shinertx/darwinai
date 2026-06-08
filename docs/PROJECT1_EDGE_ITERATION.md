@@ -830,6 +830,38 @@ Rent-seeded dry-run scan:
 
 Interpretation: the selector correctly avoids strict-zero/no-seed pools and does not hit pool-extension preflight blockers, but exact-one-buy plus very-low-noise candidates were too sparse in this 10-minute live stream. Live remains locked. The next search mutation should explore rent-seeded variants with measured tradeoffs, such as allowing slightly more interactions only if replay shows a materially higher post-cost edge and the no-pool-extension rate remains high.
 
+### Rent-Seeded Low-Noise Replay Split
+
+Code change:
+
+- Commit: `6336c20 Split rent seeded low-noise replay profile`
+- Added replay profile `rent_seeded_low_noise` for pools with exactly one early non-creator buy and up to five early interactions.
+- Kept `one_buy_probe` for the stricter exactly-one-buy, at-most-two-interactions case.
+- Tests: local `npm test` passed `78/78`.
+
+Reason: after the rent-seeded live selector found no exact-one-buy, very-low-noise candidate in 10 minutes, the next question was whether slightly more early noise still had enough modeled edge. The old `low_buy_competition` bucket was too broad to answer that.
+
+Strict current-window replay:
+
+- Grid: `data/meta-observer/replay-path-grid-study-2026-06-08T06-06-27-438Z.json`
+- Events file: `data/meta-observer/events-2026-06-08T03-29-38-002Z.jsonl`
+- Rent audit: `data/meta-observer/first-buyer-rent-audit-2026-06-08T05-35-24-070Z.json`
+- Scenarios: `120`
+- Minimum rent-tradable rate: `0.90`
+- Minimum median modeled net: `15%`
+- Minimum average modeled net: `15%`
+- Paper candidates: `0`
+
+Profile outcomes:
+
+- `rent_seeded_low_noise`: `1` pool, rent-tradable rate `100%`, win rate `0%`, best median modeled net `-0.223%`, blocked by `sample_pools<20`, modeled-margin blockers, and `win_rate<0.65`.
+- `one_buy_probe`: no rows in the current grid.
+- `delayed_crowding`: `22` pools, rent-tradable rate `81.82%`, best median modeled net `-7.0931%`, blocked by rent-tradable, modeled-margin, and win-rate blockers.
+- `low_buy_competition`: `72` pools, rent-tradable rate `84.72%`, best median modeled net around `4.0091%`, blocked by rent-tradable and modeled-margin blockers.
+- `strict_zero`: still has high modeled return, but rent-tradable rate `0` and remains blocked by no rent-free first-buyer evidence.
+
+Interpretation: the measured rent-seeded variants do not produce a promotion-ready candidate in the current observer window. There is no justified dry-run or funded canary from these profiles. Live remains locked. The next search rewrite should move beyond first-five-second shape alone and add a stronger predictor, such as creator/pool metadata, reserve trajectory, or a post-entry momentum filter that can be replayed before any live path.
+
 ## 2026-06-05 Break-Even-Aware Snapshot
 
 Server report:
