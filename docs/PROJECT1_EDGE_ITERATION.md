@@ -1036,6 +1036,24 @@ Server start:
 - Latest target status at startup: `WAIT`
 - Live trading remains locked.
 
+### Promotion Batch Replay-Target Preflight
+
+Code change:
+
+- The 20-loop cyborg promotion batch now refuses to start unless the latest replay target-watch artifact is a clean `PAPER_CANDIDATE`.
+- Missing target-watch artifacts, `WAIT`, `TARGET_NOT_FOUND`, zero candidate rows, or target blockers stop the batch before wallet resolution or any live buy.
+- `CYBORG_PROMOTION_ALLOW_REPLAY_TARGET_BYPASS=true` exists only for one-off diagnostics and cannot count as Promotion Gate proof.
+- Tests: local `npm test` passed `92/92`.
+
+Current measured state:
+
+- Monitor baseline event size: `663504101` bytes.
+- Current event size checked manually: `672453287` bytes.
+- Growth: `8949186` bytes, below the `25000000` byte refresh threshold.
+- Latest target status remains `WAIT`.
+
+Interpretation: the live 20-loop path is now mechanically attached to the offline replay gate. This does not make Darwin profitable yet, but it prevents the operator loop from spending tiny live canaries while the target is still under-sampled.
+
 ## 2026-06-05 Break-Even-Aware Snapshot
 
 Server report:

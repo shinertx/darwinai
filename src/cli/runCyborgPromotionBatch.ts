@@ -5,6 +5,7 @@ import dotenv from 'dotenv'
 import { resolveCyborgShapeScoringConfig } from '../observatory/cyborgShapeScoring'
 import { resolveCyborgStrategyConfig } from '../observatory/cyborgStrategyConfig'
 import { evaluateCyborgProfitabilityPreflight } from '../promotion/CyborgProfitabilityPreflight'
+import { evaluateCyborgReplayTargetPreflight } from '../promotion/CyborgReplayTargetPreflight'
 
 function parsePositiveInt(value: string | undefined, fallback: number): number {
   const parsed = Number.parseInt(value || '', 10)
@@ -76,6 +77,7 @@ async function main(): Promise<void> {
   const allowPoolExtend = parseBool(process.env.DARWIN_LIVE_ALLOW_POOL_EXTEND, false)
   const allowQuarantinedPoolExtend = parseBool(process.env.CYBORG_PROMOTION_ALLOW_QUARANTINED_POOL_EXTEND, false)
   const allowKnownUnprofitable = parseBool(process.env.CYBORG_PROMOTION_ALLOW_KNOWN_UNPROFITABLE, false)
+  const allowReplayTargetBypass = parseBool(process.env.CYBORG_PROMOTION_ALLOW_REPLAY_TARGET_BYPASS, false)
   const profitPreflightLookbackMs = parsePositiveInt(
     process.env.CYBORG_PROMOTION_PROFIT_PREFLIGHT_LOOKBACK_MS,
     7 * 24 * 60 * 60 * 1000
@@ -97,6 +99,21 @@ async function main(): Promise<void> {
   }
   if (allowPoolExtend && !allowQuarantinedPoolExtend) {
     throw new Error('Pool-extension promotion batches are quarantined after the 2026-06-05 negative unflattened loop. Set CYBORG_PROMOTION_ALLOW_QUARANTINED_POOL_EXTEND=true only for a one-off diagnostic, never for promotion.')
+  }
+  const replayTargetPreflight = evaluateCyborgReplayTargetPreflight({
+    inputDir: outputDir,
+    targetWatchPath: process.env.CYBORG_PROMOTION_REPLAY_TARGET_WATCH_PATH,
+    allowReplayTargetBypass,
+  })
+  console.log('[CyborgPromotionBatch] Replay target preflight:', replayTargetPreflight.message)
+  if (replayTargetPreflight.targetWatchPath) {
+    console.log('[CyborgPromotionBatch] Replay target artifact:', replayTargetPreflight.targetWatchPath)
+  }
+  if (replayTargetPreflight.blockers.length > 0) {
+    console.log('[CyborgPromotionBatch] Replay target blockers:', replayTargetPreflight.blockers.join(', '))
+  }
+  if (!replayTargetPreflight.allowed) {
+    throw new Error(replayTargetPreflight.message)
   }
 
   const canaryEnv: NodeJS.ProcessEnv = {
