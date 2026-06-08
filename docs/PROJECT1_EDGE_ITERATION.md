@@ -666,6 +666,32 @@ Latest low-competition dry-run scan:
 
 Interpretation: the wider replay found paper candidates, but the first strict-zero mutation turned negative under current modeled costs, and the first low-competition live scan could not produce a preflight-tradable, sufficiently clean candidate inside five minutes. The current evidence supports more paper/preflight iteration, not funded live trading.
 
+### Relaxed Low-Competition Preflight Dry-Run
+
+Server dry-run:
+
+- Artifact: `data/meta-observer/cyborg-dry-run-2026-06-08T05-10-52-915Z.json`
+- Config: `minScore=58`, `maxBuyCompetitors5s=1`, `maxInteractions5s=12`, `exitAfterLaterBuys=3`, `maxHold=15000 ms`
+- State-rent policy: ATA create allowed, pool extension blocked, close token ATA on sell enabled
+- Entry tradability preflight: `tradable=true`
+
+Result:
+
+- Pool: `FkZSNStekeDH2riXvq1sHPw2FG1Ge1xizyrVLJJb2LfR`
+- Mint: `82jnnxZ3gA5b99usFBJuUtT1T9ikiPKGirEotYnNdoQa`
+- Profile: `low_competition`
+- Shape score: `70`
+- Exit reason: `max_hold`
+- Later buy wallets observed: `2`
+- Exit wait: `15162 ms`
+- Modeled gross return: `0.07421007592069984%`
+- Modeled fixed cost: `0.000015966 SOL`
+- Modeled cost on `0.0001 SOL` size: `15.966%`
+- Modeled net return: `-15.8917899240793%`
+- Modeled net SOL at `0.0001 SOL` size: `-0.0000158917899240793 SOL`
+
+Interpretation: relaxing the scorer to the low-competition paper profile did produce a preflight-tradable candidate without pool extension, but the first executed dry-run was clearly negative after the fixed-cost proxy. This config cannot justify funded live canary without stronger repeated dry-run evidence or a materially lower cost floor.
+
 ## 2026-06-05 Break-Even-Aware Snapshot
 
 Server report:
