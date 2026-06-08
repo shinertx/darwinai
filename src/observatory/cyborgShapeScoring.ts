@@ -11,6 +11,7 @@ export type CyborgShapeScoringConfig = {
   minScore: number
   minBuyCompetitors5s: number
   maxBuyCompetitors5s: number
+  minInteractingWallets5s: number
   maxInteractingWallets5s: number
   minLiquiditySol: number
   requireUniqueCreator: boolean
@@ -30,6 +31,7 @@ export type CyborgShapeScore = {
 const DEFAULT_MIN_SCORE = 70
 const DEFAULT_MIN_BUY_COMPETITORS_5S = 0
 const DEFAULT_MAX_BUY_COMPETITORS_5S = 1
+const DEFAULT_MIN_INTERACTING_WALLETS_5S = 0
 const DEFAULT_MAX_INTERACTING_WALLETS_5S = 12
 const DEFAULT_MIN_LIQUIDITY_SOL = 20
 const DEFAULT_REQUIRE_UNIQUE_CREATOR = true
@@ -70,6 +72,10 @@ export function resolveCyborgShapeScoringConfig(
     maxBuyCompetitors5s: parseNonNegativeInt(
       env.PUMPSWAP_CYBORG_SCORER_MAX_BUY_COMPETITORS_5S,
       DEFAULT_MAX_BUY_COMPETITORS_5S
+    ),
+    minInteractingWallets5s: parseNonNegativeInt(
+      env.PUMPSWAP_CYBORG_SCORER_MIN_INTERACTIONS_5S,
+      DEFAULT_MIN_INTERACTING_WALLETS_5S
     ),
     maxInteractingWallets5s: parseNonNegativeInt(
       env.PUMPSWAP_CYBORG_SCORER_MAX_INTERACTIONS_5S,
@@ -112,6 +118,9 @@ export function scoreCyborgShape(
   }
   if (input.buyCompetitorWalletCount5s > config.maxBuyCompetitors5s) {
     blockers.push(`buy_competitors_5s>${config.maxBuyCompetitors5s}`)
+  }
+  if (input.interactingWalletCount5s < config.minInteractingWallets5s) {
+    blockers.push(`interactions_5s<${config.minInteractingWallets5s}`)
   }
   if (input.interactingWalletCount5s > config.maxInteractingWallets5s) {
     blockers.push(`interactions_5s>${config.maxInteractingWallets5s}`)

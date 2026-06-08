@@ -1120,6 +1120,23 @@ Monitor state correction:
 - Latest monitor state remains `WAIT`; event growth since the current baseline was below the `25000000` byte refresh threshold.
 - Tests: local `npm test` passed `96/96`.
 
+### Replay Target to Live Config Bridge
+
+Code change:
+
+- Replay-target preflight now emits `recommendedEnv` from the `bestMatch` segment and scenario.
+- The cyborg promotion batch applies those target-derived env keys before starting any live canary loop.
+- The live scorer now supports `PUMPSWAP_CYBORG_SCORER_MIN_INTERACTIONS_5S`, so the crowded target can require `pre_entry_interactions=11_plus` instead of using the old low-noise scorer.
+- Tests: local `npm test` passed `97/97`.
+
+Current target-derived config for the frontier segment:
+
+- Segment: `profile=crowded|rent=yes|initial_liquidity=75_to_125_sol|entry_liquidity_growth=0_to_10_pct|entry_momentum=0_to_10_pct|pre_entry_buys=3_to_5|pre_entry_interactions=11_plus`
+- Scenario: `entryDelayMs=3000`, `exitAfterLaterBuys=10`, `maxHoldMs=15000`
+- Scorer bridge: `minScore=18`, `minBuyCompetitors5s=3`, `maxBuyCompetitors5s=5`, `minInteractingWallets5s=11`, `maxInteractingWallets5s=999`, `minLiquiditySol=75`
+
+Interpretation: this fixes a live-readiness mismatch. If the target eventually reaches `PAPER_CANDIDATE`, the promotion batch will run the crowded rent-safe segment that replay proved, not the stale quiet-pool default. This does not unlock live yet: the latest target remains `WAIT` with `6` pools, `5` completed paths, and blockers `sample_pools<20` plus `completed_paths<20`.
+
 ## 2026-06-05 Break-Even-Aware Snapshot
 
 Server report:

@@ -54,8 +54,14 @@ test('replay target preflight allows promotion only on a clean paper candidate',
   withTempDir((dir) => {
     const artifact = writeTarget(dir, 'replay-target-watch-2026-06-08T00-00-00-000Z.json', {
       status: 'PAPER_CANDIDATE',
-      candidates: [{ segment: 'profile=low_buy_competition|rent=yes' }],
+      candidates: [{ segment: 'profile=crowded|rent=yes' }],
       bestMatch: {
+        segment: 'profile=crowded|rent=yes|initial_liquidity=75_to_125_sol|pre_entry_buys=3_to_5|pre_entry_interactions=11_plus',
+        scenarioInputs: {
+          entryDelayMs: 3000,
+          exitAfterLaterBuys: 10,
+          maxHoldMs: 15000,
+        },
         blockers: [],
       },
     })
@@ -66,6 +72,15 @@ test('replay target preflight allows promotion only on a clean paper candidate',
     assert.equal(result.reason, 'paper_candidate')
     assert.equal(result.targetWatchPath, artifact)
     assert.equal(result.candidateCount, 1)
+    assert.equal(result.recommendedEnv.PUMPSWAP_CYBORG_EXECUTION_DEFER_MS, '3000')
+    assert.equal(result.recommendedEnv.PUMPSWAP_CYBORG_EXIT_AFTER_LATER_BUYS, '10')
+    assert.equal(result.recommendedEnv.PUMPSWAP_CYBORG_MAX_HOLD_MS, '15000')
+    assert.equal(result.recommendedEnv.PUMPSWAP_CYBORG_SCORER_MIN_SCORE, '18')
+    assert.equal(result.recommendedEnv.PUMPSWAP_CYBORG_SCORER_MIN_BUY_COMPETITORS_5S, '3')
+    assert.equal(result.recommendedEnv.PUMPSWAP_CYBORG_SCORER_MAX_BUY_COMPETITORS_5S, '5')
+    assert.equal(result.recommendedEnv.PUMPSWAP_CYBORG_SCORER_MIN_INTERACTIONS_5S, '11')
+    assert.equal(result.recommendedEnv.PUMPSWAP_CYBORG_SCORER_MAX_INTERACTIONS_5S, '999')
+    assert.equal(result.recommendedEnv.PUMPSWAP_CYBORG_SCORER_MIN_LIQUIDITY_SOL, '75')
   })
 })
 

@@ -92,6 +92,8 @@ Before spending the first loop, the batch runner also scans recent `cyborg-canar
 
 Before spending the first loop, the batch runner must also find a latest `replay-target-watch-*.json` artifact whose status is `PAPER_CANDIDATE`, with at least one candidate row and no target blockers. `WAIT`, `TARGET_NOT_FOUND`, missing artifacts, or blocked best matches keep live locked. `CYBORG_PROMOTION_ALLOW_REPLAY_TARGET_BYPASS=true` is a diagnostic override only; it must not be used as promotion proof.
 
+When the replay-target preflight passes, the promotion batch applies target-derived live configuration from the same artifact before starting the canary loop. This includes the replay scenario (`PUMPSWAP_CYBORG_EXECUTION_DEFER_MS`, `PUMPSWAP_CYBORG_EXIT_AFTER_LATER_BUYS`, `PUMPSWAP_CYBORG_MAX_HOLD_MS`) and scorer constraints such as buy-competitor range, interaction range, and liquidity floor. The goal is config identity: a `PAPER_CANDIDATE` unlock must run the replay-proven shape, not a stale default scorer.
+
 When a config is blocked by known live loss evidence, run the offline break-even analyzer before proposing another live canary:
 
 ```bash

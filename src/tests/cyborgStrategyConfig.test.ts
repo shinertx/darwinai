@@ -15,7 +15,9 @@ test('cyborg strategy config defaults to immediate exit', () => {
 })
 
 test('cyborg strategy config records replay-backed later-buyer exit rule', () => {
-  const shapeConfig = resolveCyborgShapeScoringConfig({})
+  const shapeConfig = resolveCyborgShapeScoringConfig({
+    PUMPSWAP_CYBORG_SCORER_MIN_INTERACTIONS_5S: '11',
+  })
   const config = resolveCyborgStrategyConfig({
     PUMPSWAP_CYBORG_EXIT_AFTER_LATER_BUYS: '10',
     PUMPSWAP_CYBORG_MAX_HOLD_MS: '60000',
@@ -26,6 +28,7 @@ test('cyborg strategy config records replay-backed later-buyer exit rule', () =>
     laterBuyThreshold: 10,
     maxHoldMs: 60_000,
   })
+  assert.equal(config.scorer.minInteractingWallets5s, 11)
 })
 
 test('cyborg strategy config requires threshold and max-hold before delayed exit is active', () => {

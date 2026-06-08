@@ -16,6 +16,7 @@ export type CyborgStrategyConfig = {
     minScore: number
     minBuyCompetitors5s: number
     maxBuyCompetitors5s: number
+    minInteractingWallets5s: number
     maxInteractingWallets5s: number
     minLiquiditySol: number
     requireUniqueCreator: boolean
@@ -51,6 +52,7 @@ export function resolveCyborgStrategyConfig(
       minScore: shapeConfig.minScore,
       minBuyCompetitors5s: shapeConfig.minBuyCompetitors5s,
       maxBuyCompetitors5s: shapeConfig.maxBuyCompetitors5s,
+      minInteractingWallets5s: shapeConfig.minInteractingWallets5s,
       maxInteractingWallets5s: shapeConfig.maxInteractingWallets5s,
       minLiquiditySol: shapeConfig.minLiquiditySol,
       requireUniqueCreator: shapeConfig.requireUniqueCreator,

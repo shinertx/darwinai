@@ -13,6 +13,7 @@ const BASE_CONFIG: CyborgStrategyConfig = {
     minScore: 58,
     minBuyCompetitors5s: 0,
     maxBuyCompetitors5s: 0,
+    minInteractingWallets5s: 0,
     maxInteractingWallets5s: 0,
     minLiquiditySol: 0,
     requireUniqueCreator: true,

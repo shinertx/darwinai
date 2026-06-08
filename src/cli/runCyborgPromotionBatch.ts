@@ -62,6 +62,10 @@ function latestBatchResult(outputDir: string, startedAtMs: number): { netReturnS
   return { netReturnSol: parsed.netReturnSol, filePath: latest }
 }
 
+function targetEnvValue(targetEnv: Record<string, string>, key: string, fallback: string): string {
+  return targetEnv[key] || process.env[key] || fallback
+}
+
 async function main(): Promise<void> {
   dotenv.config()
   try {
@@ -115,13 +119,23 @@ async function main(): Promise<void> {
   if (!replayTargetPreflight.allowed) {
     throw new Error(replayTargetPreflight.message)
   }
+  const replayTargetEnv = replayTargetPreflight.recommendedEnv
+  const replayTargetEnvKeys = Object.keys(replayTargetEnv).sort()
+  if (replayTargetEnvKeys.length > 0) {
+    console.log('[CyborgPromotionBatch] Applying replay target env keys:', replayTargetEnvKeys.join(', '))
+  }
 
   const canaryEnv: NodeJS.ProcessEnv = {
     ...process.env,
+    ...replayTargetEnv,
     PUMPSWAP_META_OUTPUT_DIR: outputDir,
     PUMPSWAP_CYBORG_CANARY_SIZE_SOL: canarySizeSol.toString(),
     PUMPSWAP_CYBORG_CANARY_TIMEOUT_MS: attemptTimeoutMs.toString(),
-    PUMPSWAP_CYBORG_EXECUTION_DEFER_MS: process.env.PUMPSWAP_CYBORG_EXECUTION_DEFER_MS || '15000',
+    PUMPSWAP_CYBORG_EXECUTION_DEFER_MS: targetEnvValue(
+      replayTargetEnv,
+      'PUMPSWAP_CYBORG_EXECUTION_DEFER_MS',
+      '15000'
+    ),
     DARWIN_MODE: 'live',
     LIVE_TRADE_SIZE_SOL: canarySizeSol.toString(),
     LIVE_MIN_BALANCE_SOL: process.env.LIVE_MIN_BALANCE_SOL || '0.003',

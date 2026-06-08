@@ -64,6 +64,34 @@ test('rent-seeded mode requires an early non-creator buy', () => {
   assert.ok(rentSeeded.reasons.includes('rent_seeded_buy_competitor_5s'))
 })
 
+test('crowded target mode can require minimum early interactions', () => {
+  const config = resolveCyborgShapeScoringConfig({
+    PUMPSWAP_CYBORG_SCORER_MIN_SCORE: '18',
+    PUMPSWAP_CYBORG_SCORER_MIN_BUY_COMPETITORS_5S: '3',
+    PUMPSWAP_CYBORG_SCORER_MAX_BUY_COMPETITORS_5S: '5',
+    PUMPSWAP_CYBORG_SCORER_MIN_INTERACTIONS_5S: '11',
+    PUMPSWAP_CYBORG_SCORER_MAX_INTERACTIONS_5S: '999',
+    PUMPSWAP_CYBORG_SCORER_MIN_LIQUIDITY_SOL: '75',
+  })
+  const tooQuiet = scoreCyborgShape({
+    buyCompetitorWalletCount5s: 3,
+    interactingWalletCount5s: 5,
+    liquiditySol: 100,
+    uniqueCreatorInRun: true,
+  }, config)
+  const crowdedTarget = scoreCyborgShape({
+    buyCompetitorWalletCount5s: 3,
+    interactingWalletCount5s: 11,
+    liquiditySol: 100,
+    uniqueCreatorInRun: true,
+  }, config)
+
+  assert.equal(tooQuiet.qualified, false)
+  assert.ok(tooQuiet.blockers.includes('interactions_5s<11'))
+  assert.equal(crowdedTarget.profile, 'crowded')
+  assert.equal(crowdedTarget.qualified, true)
+})
+
 test('repeat creators and noisy 5-second windows are blocked', () => {
   const config = resolveCyborgShapeScoringConfig({})
   const score = scoreCyborgShape({
