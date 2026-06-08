@@ -804,6 +804,32 @@ Top blocked profiles:
 
 Interpretation: after requiring both no-pool-extension coverage and a real modeled margin, the current observer window has no paper candidate worth another funded canary. Live remains locked. The next useful mutation is not parameter tuning around the current profiles; it is a new profile/search feature that combines no-pool-extension eligibility with materially stronger post-cost exitability.
 
+### Rent-Seeded Cyborg Selector
+
+Code change:
+
+- Commit: `72f3666 Add rent-seeded cyborg selector`
+- Added `PUMPSWAP_CYBORG_SCORER_MIN_BUY_COMPETITORS_5S`.
+- Added the field to `strategyConfig.scorer` so promotion evidence and known-loss preflights fingerprint the selector.
+- Added visible canary startup logging: `minBuy5s=...`.
+- Tests: local `npm test` passed `77/77`.
+
+Reason: strict-zero pools repeatedly showed strong modeled returns but failed live entry preflight with `state_rent_blocked:pool_extend`. The rent-seeded selector lets Darwin require at least one non-creator buy in the first five seconds, so Darwin is not trying to be the first setup actor on a pool that likely needs extension.
+
+Rent-seeded dry-run scan:
+
+- Artifact: `data/meta-observer/cyborg-dry-run-scan-2026-06-08T06-01-53-226Z.json`
+- Config: `minScore=70`, `minBuyCompetitors5s=1`, `maxBuyCompetitors5s=1`, `maxInteractions5s=2`, `exitAfterLaterBuys=12`, `maxHold=15000 ms`
+- State-rent policy: ATA create allowed, pool extension blocked, close token ATA on sell enabled
+- Timeout: `600000 ms`
+- Executed dry-run candidate: none
+- Skipped low-exitability candidates: `17`
+- Upstream-blocked candidates: `0`
+- Profile counts: `crowded=5`, `low_competition=11`, `strict_zero=1`
+- Blocker counts: `buy_competitors_5s>1=5`, `interactions_5s>2=15`, `buy_competitors_5s<1=12`, `repeat_creator=5`, `liquidity_sol<20=5`
+
+Interpretation: the selector correctly avoids strict-zero/no-seed pools and does not hit pool-extension preflight blockers, but exact-one-buy plus very-low-noise candidates were too sparse in this 10-minute live stream. Live remains locked. The next search mutation should explore rent-seeded variants with measured tradeoffs, such as allowing slightly more interactions only if replay shows a materially higher post-cost edge and the no-pool-extension rate remains high.
+
 ## 2026-06-05 Break-Even-Aware Snapshot
 
 Server report:
