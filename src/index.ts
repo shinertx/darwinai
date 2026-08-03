@@ -4,9 +4,9 @@ import path from 'path'
 // Load main .env
 dotenv.config()
 
-// Load local overrides if present
+// Explicit process settings (for example PM2 paper mode) must win over files.
 try {
-  dotenv.config({ path: path.resolve(process.cwd(), '.env.local'), override: true })
+  dotenv.config({ path: path.resolve(process.cwd(), '.env.local'), override: false })
 } catch (_) {}
 
 import { Orchestrator } from './Orchestrator'
