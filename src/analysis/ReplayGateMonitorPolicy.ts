@@ -1,6 +1,9 @@
 export type ReplayGateMonitorState = {
   eventFile?: string
   eventSizeBytes?: number
+  eventSummaryFile?: string | null
+  eventWindowStatus?: ReplayEventWindowStatus
+  eventTerminalReason?: string | null
   lastCheckedAt?: string
   lastRefreshAt?: string
   lastDecisionReason?: string
@@ -13,12 +16,21 @@ export type ReplayGateMonitorState = {
   latestTargetArtifact?: string | null
 }
 
+export type ReplayEventWindowStatus = 'active' | 'completed' | 'invalid'
+
+export type ReplayEventWindowClassification = {
+  status: ReplayEventWindowStatus
+  terminalReason: string | null
+}
+
 export type ReplayGateMonitorDecisionInput = {
   eventFile: string
   eventSizeBytes: number
   state: ReplayGateMonitorState | null
   minGrowthBytes: number
   runOnStart: boolean
+  eventWindowStatus: ReplayEventWindowStatus
+  eventTerminalReason?: string | null
 }
 
 export type ReplayGateMonitorDecision = {
@@ -31,24 +43,51 @@ export function isReplayGateRefreshArtifactName(name: string): boolean {
   return /^replay-gate-refresh-\d{4}-\d{2}-\d{2}T.+\.json$/.test(name)
 }
 
-export function decideReplayGateRefresh(input: ReplayGateMonitorDecisionInput): ReplayGateMonitorDecision {
-  if (!input.state?.eventFile || input.state.eventSizeBytes === undefined) {
+export function classifyReplayEventWindow(
+  summary: Record<string, unknown> | null
+): ReplayEventWindowClassification {
+  if (!summary) return { status: 'active', terminalReason: null }
+
+  const terminalReason = typeof summary.reason === 'string' ? summary.reason : 'unknown'
+  const ingest = summary.ingest as Record<string, unknown> | undefined
+  if (terminalReason !== 'completed' || ingest?.queueOverflowed === true) {
     return {
-      shouldRun: input.runOnStart,
-      reason: input.runOnStart ? 'no_state_run_on_start' : 'no_state_record_baseline',
+      status: 'invalid',
+      terminalReason: ingest?.queueOverflowed === true ? 'queue_overflow' : terminalReason,
+    }
+  }
+  return { status: 'completed', terminalReason }
+}
+
+export function decideReplayGateRefresh(input: ReplayGateMonitorDecisionInput): ReplayGateMonitorDecision {
+  if (input.eventWindowStatus === 'active') {
+    return {
+      shouldRun: false,
+      reason: 'event_window_incomplete',
       growthBytes: 0,
     }
   }
 
-  if (input.state.eventFile !== input.eventFile) {
+  if (input.eventWindowStatus === 'invalid') {
+    return {
+      shouldRun: false,
+      reason: `event_window_invalid:${input.eventTerminalReason || 'unknown'}`,
+      growthBytes: 0,
+    }
+  }
+
+  if (
+    input.state?.eventFile !== input.eventFile ||
+    input.state.eventWindowStatus !== 'completed'
+  ) {
     return {
       shouldRun: true,
-      reason: 'event_file_changed',
+      reason: 'event_window_completed',
       growthBytes: input.eventSizeBytes,
     }
   }
 
-  const growthBytes = input.eventSizeBytes - input.state.eventSizeBytes
+  const growthBytes = input.eventSizeBytes - (input.state.eventSizeBytes ?? 0)
   if (growthBytes < 0) {
     return {
       shouldRun: true,

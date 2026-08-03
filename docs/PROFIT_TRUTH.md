@@ -40,4 +40,4 @@ Three completed, non-overlapping historical windows covering five source event f
 - Best broadly sampled delayed-crowding shape: 448 completed paths across three windows, `49.8%` aggregate win rate, and `-4.08%` worst-window median modeled net return
 - Duplicate-source validation: a mixed June grid was rejected for overlapping event files instead of being double-counted
 
-This historical result does not authorize a funded trade. The August 3 live-paper collection window is still incomplete and must be added only after its final grid is written without queue overflow.
+This historical result does not authorize a funded trade. The first August 3 live-paper collection attempt terminated after 31 minutes with `reason=queue_overflow` and is invalid for promotion. A separate 15-minute reliability canary completed cleanly with 37 pools and proved that completed-window analysis can run without contending with active collection, but it is too short for promotion evidence. A clean four-hour replacement window is still required.

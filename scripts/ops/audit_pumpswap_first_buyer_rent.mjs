@@ -4,18 +4,26 @@ import readline from 'readline'
 import dotenv from 'dotenv'
 import { Connection } from '@solana/web3.js'
 
+function parsePositiveInt(value, fallback) {
+  const parsed = Number.parseInt(value || '', 10)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback
+}
+
 dotenv.config()
 try {
-  dotenv.config({ path: path.resolve(process.cwd(), '.env.local'), override: true })
+  dotenv.config({ path: path.resolve(process.cwd(), '.env.local'), override: false })
 } catch {}
 
-const WINDOW_MS = Number.parseInt(process.env.PUMPSWAP_AUDIT_WINDOW_MS || '5000', 10) || 5000
+const WINDOW_MS = parsePositiveInt(process.env.PUMPSWAP_AUDIT_WINDOW_MS, 5000)
+const RPC_MIN_SPACING_MS = parsePositiveInt(process.env.PUMPSWAP_AUDIT_RPC_MIN_SPACING_MS, 750)
 const OUTPUT_DIR = path.resolve(process.cwd(), process.env.PUMPSWAP_META_OUTPUT_DIR || 'data/meta-observer')
 const RPC_URL = ((process.env.RPC_URLS || process.env.RPC_URL || '').split(',')[0] || '').trim()
 
 if (!RPC_URL) {
   throw new Error('RPC_URL or RPC_URLS not set')
 }
+
+fs.mkdirSync(OUTPUT_DIR, { recursive: true })
 
 const eventsFile = process.env.PUMPSWAP_AUDIT_EVENTS_PATH
   ? path.resolve(process.cwd(), process.env.PUMPSWAP_AUDIT_EVENTS_PATH)
@@ -25,7 +33,19 @@ if (!eventsFile || !fs.existsSync(eventsFile)) {
   throw new Error(`Events file not found: ${eventsFile || 'none resolved'}`)
 }
 
-const connection = new Connection(RPC_URL, 'confirmed')
+const connection = new Connection(RPC_URL, {
+  commitment: 'confirmed',
+  disableRetryOnRateLimit: true,
+})
+let nextRpcAtMs = 0
+
+async function waitForRpcBudget() {
+  const waitMs = Math.max(0, nextRpcAtMs - Date.now())
+  if (waitMs > 0) {
+    await new Promise((resolve) => setTimeout(resolve, waitMs))
+  }
+  nextRpcAtMs = Date.now() + RPC_MIN_SPACING_MS
+}
 
 function resolveLatestEventsPath(outputDir) {
   const candidates = fs
@@ -57,6 +77,7 @@ async function fetchParsedTransaction(signature) {
       await new Promise((resolve) => setTimeout(resolve, 250 * attempt))
     }
     try {
+      await waitForRpcBudget()
       const tx = await connection.getParsedTransaction(signature, {
         maxSupportedTransactionVersion: 0,
         commitment: 'confirmed',
@@ -78,6 +99,7 @@ function analyzeLogs(logs) {
 async function main() {
   console.log('[Audit] Events file:', eventsFile)
   console.log('[Audit] Window ms:', WINDOW_MS)
+  console.log('[Audit] RPC min spacing ms:', RPC_MIN_SPACING_MS)
 
   const pools = new Map()
   const firstBuys = new Map()
@@ -163,6 +185,7 @@ async function main() {
   const summary = {
     eventsFile,
     windowMs: WINDOW_MS,
+    rpcMinSpacingMs: RPC_MIN_SPACING_MS,
     poolsWithFirstBuyerInWindow: firstBuys.size,
     transactionsFound: found.length,
     transactionsMissing: missingTransactions,
