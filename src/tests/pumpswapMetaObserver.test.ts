@@ -7,6 +7,8 @@ import {
   createPoolObservation,
   isNearTotalDrain,
   redactUrlForLog,
+  resolveInteractionTimeMs,
+  resolvePumpSwapMetaObserverConfig,
   resolveStrictAnchorTimeMs,
   summarizePoolObservation,
   shouldTriggerCyborgAlert,
@@ -111,6 +113,26 @@ test('resolveStrictAnchorTimeMs prefers tx blockTime then slot blockTime then un
     timeMs: null,
     source: 'unavailable',
   })
+})
+
+test('interaction timestamps avoid an RPC lookup when the event already carries time', () => {
+  assert.deepEqual(resolveInteractionTimeMs(null, null, 1_005_000), {
+    timeMs: 1_005_000,
+    source: 'eventTimestamp',
+  })
+})
+
+test('meta observer config bounds the pending websocket queue', () => {
+  const defaults = resolvePumpSwapMetaObserverConfig({
+    RPC_URL: 'https://rpc.example.invalid',
+  })
+  assert.equal(defaults.maxQueueDepth, 10_000)
+
+  const overridden = resolvePumpSwapMetaObserverConfig({
+    RPC_URL: 'https://rpc.example.invalid',
+    PUMPSWAP_META_MAX_QUEUE_DEPTH: '250',
+  })
+  assert.equal(overridden.maxQueueDepth, 250)
 })
 
 test('competition counting excludes creator signer, dedupes wallets, and ignores late events', () => {

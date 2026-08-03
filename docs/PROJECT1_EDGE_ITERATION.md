@@ -16,6 +16,23 @@ This document exists to turn Project 1 into an engineering system rather than a 
 The goal is not "prove strict-zero forever."
 The goal is "find the smallest repeatable early-window cohort with positive, stable, post-cost expectancy."
 
+## 2026-08-02 Runtime Recovery
+
+The deployed collector had stopped producing fresh evidence. Inspection found two separate reliability failures:
+
+- websocket notifications were serialized by retaining the full raw log payload in an unbounded promise queue;
+- normal completion could request shutdown from inside that same queue and wait on itself, allowing Node to exit without writing the summary.
+
+The observer now decodes notifications before queueing, uses event timestamps without an extra block-time RPC when available, caps pending batches, prunes finalized pool state and slot-cache entries, and schedules shutdown outside the active queue. Queue overflow ends the window as `queue_overflow`; that artifact is invalid for promotion. The PM2 collector window defaults to four hours so data growth remains bounded.
+
+Server-only verification on `meme-snipe-v19-vm`:
+
+- full TypeScript suite: `106/106` passing;
+- real Solana websocket canary: completed with a durable summary;
+- final queue state: `pendingLogBatches=0`, `peakQueueDepth=1`, `queueOverflowed=false`.
+
+This restores evidence collection only. It does not prove positive expectancy, authorize a funded canary, or establish realized profit.
+
 ## Core Thesis
 
 Brand-new PumpSwap pools can create short-lived windows where:

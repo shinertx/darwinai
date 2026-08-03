@@ -83,6 +83,7 @@ export interface PumpSwapMetaObserverConfig {
   minRemainingSolRawString: string
   heartbeatMs: number
   cleanupIntervalMs: number
+  maxQueueDepth: number
 }
 
 export interface ResolvedEventTime {
@@ -229,6 +230,8 @@ const DEFAULT_DRAIN_THRESHOLD_PCT = 99
 const DEFAULT_MIN_REMAINING_SOL_RAW_STRING = '0.1'
 const DEFAULT_HEARTBEAT_MS = 60_000
 const DEFAULT_CLEANUP_INTERVAL_MS = 15_000
+const DEFAULT_MAX_QUEUE_DEPTH = 10_000
+const MAX_SLOT_BLOCK_TIME_CACHE_ENTRIES = 10_000
 
 const PUMP_AMM_EVENT_PARSER = new EventParser(
   PUMP_AMM_PROGRAM_ID,
@@ -458,6 +461,7 @@ export function resolvePumpSwapMetaObserverConfig(
     minRemainingSolRawString: (env.PUMPSWAP_META_MIN_REMAINING_SOL || DEFAULT_MIN_REMAINING_SOL_RAW_STRING).trim(),
     heartbeatMs: parsePositiveInt(env.PUMPSWAP_META_HEARTBEAT_MS, DEFAULT_HEARTBEAT_MS),
     cleanupIntervalMs: parsePositiveInt(env.PUMPSWAP_META_CLEANUP_INTERVAL_MS, DEFAULT_CLEANUP_INTERVAL_MS),
+    maxQueueDepth: parsePositiveInt(env.PUMPSWAP_META_MAX_QUEUE_DEPTH, DEFAULT_MAX_QUEUE_DEPTH),
   }
 }
 
@@ -906,6 +910,10 @@ export class PumpSwapMetaObserver {
   private readonly finalizedPools: PoolSummary[] = []
   private readonly slotBlockTimeCache = new Map<number, number | null>()
   private queue: Promise<void> = Promise.resolve()
+  private pendingLogBatches = 0
+  private peakQueueDepth = 0
+  private queueOverflowed = false
+  private shutdownScheduled = false
   private logsSubscriptionId: number | null = null
   private heartbeatHandle: NodeJS.Timeout | null = null
   private cleanupHandle: NodeJS.Timeout | null = null
@@ -962,10 +970,39 @@ export class PumpSwapMetaObserver {
     this.logsSubscriptionId = this.connection.onLogs(
       PUMP_AMM_PROGRAM_ID,
       (logs: LogsNotification, ctx: { slot: number }) => {
+        if (this.shuttingDown || logs.err) return
+
+        let decodedEvents: PumpAmmDecodedEvent[]
+        try {
+          decodedEvents = extractTrackedPumpAmmEvents(logs.logs || [])
+        } catch (error) {
+          console.error('[MetaObserver] log decode error:', error)
+          return
+        }
+        if (decodedEvents.length === 0) return
+
+        if (this.pendingLogBatches >= this.config.maxQueueDepth) {
+          if (!this.queueOverflowed) {
+            this.queueOverflowed = true
+            console.error(
+              '[MetaObserver] queue overflow at depth=' +
+              this.pendingLogBatches +
+              '; stopping this evidence window before data loss or OOM.'
+            )
+            this.scheduleShutdown('queue_overflow')
+          }
+          return
+        }
+
+        this.pendingLogBatches += 1
+        this.peakQueueDepth = Math.max(this.peakQueueDepth, this.pendingLogBatches)
         this.queue = this.queue
-          .then(() => this.handleLogs(logs, ctx.slot))
+          .then(() => this.handleDecodedEvents(decodedEvents, logs.signature, ctx.slot))
           .catch((error) => {
             console.error('[MetaObserver] log handler error:', error)
+          })
+          .finally(() => {
+            this.pendingLogBatches = Math.max(0, this.pendingLogBatches - 1)
           })
       },
       'confirmed'
@@ -984,28 +1021,27 @@ export class PumpSwapMetaObserver {
     })
   }
 
-  private async handleLogs(logs: LogsNotification, slot: number): Promise<void> {
+  private async handleDecodedEvents(
+    decodedEvents: PumpAmmDecodedEvent[],
+    signature: string,
+    slot: number
+  ): Promise<void> {
     if (this.shuttingDown) return
 
     if (Date.now() >= this.cutoffAtMs) {
       this.ingestClosed = true
     }
 
-    if (logs.err) return
-
-    const decodedEvents = extractTrackedPumpAmmEvents(logs.logs || [])
-    if (decodedEvents.length === 0) return
-
     for (const event of decodedEvents) {
       if (event.name === 'CreatePoolEvent') {
         if (this.ingestClosed) {
           continue
         }
-        await this.handleCreatePoolEvent(event.data, logs.signature, slot)
+        await this.handleCreatePoolEvent(event.data, signature, slot)
         continue
       }
 
-      await this.handleInteractionEvent(event.data, logs.signature, slot)
+      await this.handleInteractionEvent(event.data, signature, slot)
     }
 
     this.flushCyborgAlerts(Date.now())
@@ -1070,8 +1106,11 @@ export class PumpSwapMetaObserver {
       return
     }
 
-    const slotBlockTimeSeconds = await this.getSlotBlockTimeSeconds(slot)
-    const resolvedTime = resolveInteractionTimeMs(null, slotBlockTimeSeconds, event.eventTimestampMs)
+    let resolvedTime = resolveInteractionTimeMs(null, null, event.eventTimestampMs)
+    if (resolvedTime.timeMs === null) {
+      const slotBlockTimeSeconds = await this.getSlotBlockTimeSeconds(slot)
+      resolvedTime = resolveInteractionTimeMs(null, slotBlockTimeSeconds, null)
+    }
     const windowState = applyInteractionEvent(pool, event, resolvedTime, signature, this.config)
 
     writeJsonLine(this.eventsStream, {
@@ -1119,10 +1158,20 @@ export class PumpSwapMetaObserver {
     try {
       const blockTime = await this.connection.getBlockTime(slot)
       this.slotBlockTimeCache.set(slot, blockTime)
+      this.pruneSlotBlockTimeCache()
       return blockTime
     } catch (_) {
       this.slotBlockTimeCache.set(slot, null)
+      this.pruneSlotBlockTimeCache()
       return null
+    }
+  }
+
+  private pruneSlotBlockTimeCache(): void {
+    while (this.slotBlockTimeCache.size > MAX_SLOT_BLOCK_TIME_CACHE_ENTRIES) {
+      const oldest = this.slotBlockTimeCache.keys().next().value as number | undefined
+      if (oldest === undefined) return
+      this.slotBlockTimeCache.delete(oldest)
     }
   }
 
@@ -1146,9 +1195,21 @@ export class PumpSwapMetaObserver {
       this.ingestClosed = true
     }
 
-    if (this.ingestClosed && [...this.pools.values()].every((pool) => pool.finalized)) {
-      await this.shutdown('completed')
+    if (this.ingestClosed && this.pools.size === 0) {
+      this.scheduleShutdown('completed')
     }
+  }
+
+  private scheduleShutdown(reason: string): void {
+    if (this.shuttingDown || this.shutdownScheduled) return
+    this.shutdownScheduled = true
+    setImmediate(() => {
+      this.shutdownScheduled = false
+      void this.shutdown(reason).catch((error) => {
+        console.error('[MetaObserver] shutdown error:', error)
+        this.rejectDone?.(error)
+      })
+    })
   }
 
   private finalizePool(pool: PoolObservationState, nowMs: number): void {
@@ -1158,6 +1219,7 @@ export class PumpSwapMetaObserver {
     const summary = summarizePoolObservation(pool, nowMs, this.config)
     this.finalizedPools.push(summary)
     writeJsonLine(this.poolsStream, summary as unknown as JsonValue)
+    this.pools.delete(pool.pool)
   }
 
   private flushCyborgAlerts(nowMs: number): void {
@@ -1190,14 +1252,17 @@ export class PumpSwapMetaObserver {
   }
 
   private printHeartbeat(): void {
-    const activePools = [...this.pools.values()].filter((pool) => !pool.finalized).length
     console.log(
       '[MetaObserver] heartbeat pools=' +
-      this.pools.size +
+      (this.pools.size + this.finalizedPools.length) +
       ' active=' +
-      activePools +
+      this.pools.size +
       ' finalized=' +
       this.finalizedPools.length +
+      ' queue=' +
+      this.pendingLogBatches +
+      ' queuePeak=' +
+      this.peakQueueDepth +
       ' ingestClosed=' +
       this.ingestClosed
     )
@@ -1252,6 +1317,11 @@ export class PumpSwapMetaObserver {
       config: this.config,
       metrics,
       pools: this.finalizedPools,
+      ingest: {
+        pendingLogBatches: this.pendingLogBatches,
+        peakQueueDepth: this.peakQueueDepth,
+        queueOverflowed: this.queueOverflowed,
+      },
       artifacts: {
         eventsPath: this.eventsPath,
         poolsPath: this.poolsPath,
@@ -1280,7 +1350,7 @@ export class PumpSwapMetaObserver {
 async function main(): Promise<void> {
   dotenv.config()
   try {
-    dotenv.config({ path: path.resolve(process.cwd(), '.env.local'), override: true })
+    dotenv.config({ path: path.resolve(process.cwd(), '.env.local'), override: false })
   } catch (_) {}
 
   const observer = new PumpSwapMetaObserver(resolvePumpSwapMetaObserverConfig(process.env))

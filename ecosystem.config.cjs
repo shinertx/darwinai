@@ -14,6 +14,8 @@ function buildMetaObserverPaths() {
   return {
     PUMPSWAP_META_OUTPUT_DIR: 'data/meta-observer',
     PUMPSWAP_META_LOG_DIR: 'logs/meta-observer',
+    PUMPSWAP_META_RUN_HOURS: process.env.PUMPSWAP_META_RUN_HOURS || '4',
+    PUMPSWAP_META_MAX_QUEUE_DEPTH: process.env.PUMPSWAP_META_MAX_QUEUE_DEPTH || '10000',
     PUMPSWAP_CYBORG_ALERT_WINDOW_MS: process.env.PUMPSWAP_CYBORG_ALERT_WINDOW_MS || '5000',
     PUMPSWAP_CYBORG_MAX_BUY_COMPETITORS: process.env.PUMPSWAP_CYBORG_MAX_BUY_COMPETITORS || '0',
   }
@@ -104,6 +106,7 @@ module.exports = {
       name: 'darwin-pumpswap-meta-observer',
       script: 'dist/cli/pumpswapMetaObserver.js',
       cwd: __dirname,
+      node_args: '--max-old-space-size=3072',
       stop_exit_codes: [0],
       out_file: 'logs/meta-observer.out.log',
       error_file: 'logs/meta-observer.error.log',
