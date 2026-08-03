@@ -239,6 +239,17 @@ npm run analyze:pumpswap:replay-paths
 
 The `0.000015966 SOL` cost proxy is the median round-trip fee estimate from rent-safe first-buyer transactions in the widened five-minute audit below. It is not a Promotion Gate cost claim; it exists to separate true rent-safe execution friction from the prior failed canary's total market/strategy loss.
 
+Repeated grid snapshots from one growing `events-*.jsonl` file are not independent evidence. Before a cohort can be called `paper_positive`, select one final grid per non-overlapping observer window and run the cross-window gate:
+
+```bash
+PUMPSWAP_REPLAY_CROSS_WINDOW_GRID_PATHS=data/meta-observer/replay-path-grid-study-window-a.json,data/meta-observer/replay-path-grid-study-window-b.json \
+npm run analyze:pumpswap:replay-cross-window
+```
+
+The command fails on any repeated event source. It combines only identical entry delay, hold time, later-buyer exit, trade size, fixed-cost, profile, and segment keys. Its default gate requires at least two windows, 20 total completed paths, five completed paths per window, 90% rent tradability, 65% aggregate wins, positive average results in every window, and a worst-window median modeled net return above 15%. A strong window cannot hide a losing window.
+
+This remains historical/paper evidence. A cross-window `PAPER_CANDIDATE` may unlock a matching live-shadow test, but never a funded canary or size increase by itself.
+
 ## System Architecture
 
 ### Layer 1: Collection

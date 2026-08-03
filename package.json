@@ -26,6 +26,7 @@
     "analyze:pumpswap:event-cohorts": "node scripts/ops/analyze_pumpswap_event_cohorts.mjs",
     "analyze:pumpswap:replay-paths": "node dist/cli/pumpswapReplayPaths.js",
     "analyze:pumpswap:replay-frontier": "node dist/cli/pumpswapReplayFrontier.js",
+    "analyze:pumpswap:replay-cross-window": "node dist/cli/pumpswapReplayCrossWindow.js",
     "analyze:pumpswap:replay-target": "node dist/cli/pumpswapReplayTargetWatch.js",
     "analyze:pumpswap:replay-gate-refresh": "node dist/cli/pumpswapReplayGateRefresh.js",
     "monitor:pumpswap:replay-gate": "node dist/cli/pumpswapReplayGateMonitor.js",

@@ -16,6 +16,7 @@ export type ReplayFrontierScenario = {
     entryDelayMs?: number
     maxHoldMs?: number
     exitAfterLaterBuys?: number
+    tradeSizeSol?: number
     fixedCostSol?: number
   }
   byProfile?: ReplayFrontierMetricRow[]
@@ -24,6 +25,9 @@ export type ReplayFrontierScenario = {
 
 export type ReplayFrontierGrid = {
   generatedAt?: string
+  inputs?: {
+    eventFiles?: string[]
+  }
   scenarios?: ReplayFrontierScenario[]
 }
 
