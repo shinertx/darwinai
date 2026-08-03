@@ -32,6 +32,7 @@ Server-only verification on `meme-snipe-v19-vm`:
 - final queue state: `pendingLogBatches=0`, `peakQueueDepth=1`, `queueOverflowed=false`.
 
 This restores evidence collection only. It does not prove positive expectancy, authorize a funded canary, or establish realized profit.
+Current wallet and receipt reconciliation lives in `docs/PROFIT_TRUTH.md`.
 
 ## Core Thesis
 
