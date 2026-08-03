@@ -5,7 +5,7 @@ import dotenv from 'dotenv'
 
 dotenv.config()
 try {
-  dotenv.config({ path: path.resolve(process.cwd(), '.env.local'), override: true })
+  dotenv.config({ path: path.resolve(process.cwd(), '.env.local'), override: false })
 } catch {}
 
 const OUTPUT_DIR = path.resolve(process.cwd(), process.env.PUMPSWAP_META_OUTPUT_DIR || 'data/meta-observer')

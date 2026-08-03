@@ -3,14 +3,16 @@ import path from 'path'
 import { spawnSync } from 'child_process'
 import dotenv from 'dotenv'
 import {
+  classifyReplayEventWindow,
   decideReplayGateRefresh,
   isReplayGateRefreshArtifactName,
+  type ReplayEventWindowStatus,
   type ReplayGateMonitorState,
 } from '../analysis/ReplayGateMonitorPolicy'
 
 dotenv.config()
 try {
-  dotenv.config({ path: path.resolve(process.cwd(), '.env.local'), override: true })
+  dotenv.config({ path: path.resolve(process.cwd(), '.env.local'), override: false })
 } catch {}
 
 const OUTPUT_DIR = path.resolve(process.cwd(), process.env.PUMPSWAP_META_OUTPUT_DIR || 'data/meta-observer')
@@ -64,6 +66,21 @@ function readJson(filePath: string | null): Record<string, unknown> | null {
 function readState(): ReplayGateMonitorState | null {
   const parsed = readJson(STATE_FILE)
   return parsed as ReplayGateMonitorState | null
+}
+
+function eventWindowState(eventFile: string): {
+  summaryFile: string
+  status: ReplayEventWindowStatus
+  terminalReason: string | null
+} {
+  const eventName = path.basename(eventFile)
+  const suffix = eventName.startsWith('events-') && eventName.endsWith('.jsonl')
+    ? eventName.slice('events-'.length, -'.jsonl'.length)
+    : null
+  const summaryFile = suffix
+    ? path.join(path.dirname(eventFile), `summary-${suffix}.json`)
+    : path.join(path.dirname(eventFile), 'summary-invalid-event-name.json')
+  return { summaryFile, ...classifyReplayEventWindow(readJson(summaryFile)) }
 }
 
 function writeState(state: ReplayGateMonitorState): void {
@@ -137,18 +154,24 @@ async function tick(config: {
 
   const eventSizeBytes = fs.statSync(eventFile).size
   const state = readState()
+  const windowState = eventWindowState(eventFile)
   const decision = decideReplayGateRefresh({
     eventFile,
     eventSizeBytes,
     state,
     minGrowthBytes: config.minGrowthBytes,
     runOnStart: config.runOnStart,
+    eventWindowStatus: windowState.status,
+    eventTerminalReason: windowState.terminalReason,
   })
 
   const nextState: ReplayGateMonitorState = {
     ...state,
     eventFile,
     eventSizeBytes,
+    eventSummaryFile: windowState.summaryFile,
+    eventWindowStatus: windowState.status,
+    eventTerminalReason: windowState.terminalReason,
     lastCheckedAt: checkedAt,
     lastDecisionReason: decision.reason,
     lastGrowthBytes: decision.growthBytes,
@@ -187,11 +210,13 @@ async function main(): Promise<void> {
     25_000_000
   )
   const runOnStart = parseBool(process.env.PUMPSWAP_REPLAY_GATE_MONITOR_RUN_ON_START, false)
+  const once = parseBool(process.env.PUMPSWAP_REPLAY_GATE_MONITOR_ONCE, false)
 
   console.log(
-    `[ReplayGateMonitor] Started intervalMs=${intervalMs} minGrowthBytes=${minGrowthBytes} runOnStart=${runOnStart}`
+    `[ReplayGateMonitor] Started intervalMs=${intervalMs} minGrowthBytes=${minGrowthBytes} runOnStart=${runOnStart} once=${once}`
   )
   await tick({ minGrowthBytes, runOnStart })
+  if (once) return
   setInterval(() => {
     tick({ minGrowthBytes, runOnStart }).catch((error) => {
       console.error('[ReplayGateMonitor] Tick failed:', error?.message || error)

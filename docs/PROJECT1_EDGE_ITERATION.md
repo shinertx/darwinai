@@ -34,6 +34,14 @@ Server-only verification on `meme-snipe-v19-vm`:
 This restores evidence collection only. It does not prove positive expectancy, authorize a funded canary, or establish realized profit.
 Current wallet and receipt reconciliation lives in `docs/PROFIT_TRUTH.md`.
 
+The first restored four-hour attempt then failed closed after 31 minutes with `reason=queue_overflow`. The observer itself used the rate-limited public Solana RPC while the replay monitor launched a first-buyer rent audit against the same endpoint. That offline audit used an unbudgeted connection and drove repeated `429` backoffs until the observer queue reached its hard `10,000` limit.
+
+Replay monitoring now refuses active, incomplete, or invalid event windows. It runs the RPC-heavy audit only after the matching observer summary reports `reason=completed` with no queue overflow. The rent audit also spaces requests by at least `750 ms` by default and disables hidden provider retries. The invalid partial August dataset must not enter cross-window promotion evidence.
+
+Set `PUMPSWAP_REPLAY_GATE_MONITOR_ONCE=true` for a deterministic one-shot refresh after a completed observer window; the command exits after recording the monitor decision and any resulting audit/grid/target artifacts.
+
+Server-only verification on August 3 completed a clean `15`-minute collector canary with `37` completed pools, peak queue depth `466`, and no queue overflow. The one-shot completed-window monitor then ran the rent audit, replay grid, frontier, and target watch with exit status `0` for every stage. The audit resolved `24` of `26` first-buyer transactions at the `750 ms` RPC cadence; the resulting target remained `WAIT` with `0` candidate rows. This proves bounded collector/monitor isolation, not four-hour strategy expectancy or permission to trade.
+
 ## Core Thesis
 
 Brand-new PumpSwap pools can create short-lived windows where:
@@ -238,6 +246,17 @@ npm run analyze:pumpswap:replay-paths
 ```
 
 The `0.000015966 SOL` cost proxy is the median round-trip fee estimate from rent-safe first-buyer transactions in the widened five-minute audit below. It is not a Promotion Gate cost claim; it exists to separate true rent-safe execution friction from the prior failed canary's total market/strategy loss.
+
+Repeated grid snapshots from one growing `events-*.jsonl` file are not independent evidence. Before a cohort can be called `paper_positive`, select one final grid per non-overlapping observer window and run the cross-window gate:
+
+```bash
+PUMPSWAP_REPLAY_CROSS_WINDOW_GRID_PATHS=data/meta-observer/replay-path-grid-study-window-a.json,data/meta-observer/replay-path-grid-study-window-b.json \
+npm run analyze:pumpswap:replay-cross-window
+```
+
+The command fails on any repeated event source. It combines only identical entry delay, hold time, later-buyer exit, trade size, fixed-cost, profile, and segment keys. Its default gate requires at least two windows, 20 total completed paths, five completed paths per window, 90% rent tradability, 65% aggregate wins, positive average results in every window, and a worst-window median modeled net return above 15%. A strong window cannot hide a losing window.
+
+This remains historical/paper evidence. A cross-window `PAPER_CANDIDATE` may unlock a matching live-shadow test, but never a funded canary or size increase by itself.
 
 ## System Architecture
 

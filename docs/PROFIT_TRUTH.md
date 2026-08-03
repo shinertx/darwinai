@@ -30,3 +30,14 @@ The July transactions invoked only the System Program, transferred zero lamports
 Historical stable-paper output showing `1,623+ SOL` is invalid evidence. It contains trades capped at `+10,000%` and entry-to-exit price ratios as high as `772x` within seconds. Research-paper output of `0.098080059 SOL` over 80 trades is modeled only and failed micro-live acceptance with approximately `37.54%` drawdown.
 
 No positive, finalized, flattened Darwin round trip has been proven. Do not spend on another live canary until one frozen configuration has positive execution-aware replay evidence and a matching positive live-shadow sample.
+
+## 2026-08-03 Cross-Window Replay
+
+Three completed, non-overlapping historical windows covering five source event files were evaluated with identical strategy/economic keys. The conservative cross-window gate analyzed 315 scenario grids and 46,260 grouped strategy/cohort variants.
+
+- Paper candidates: `0`
+- Closest collect-more cohort: 36 completed paths across two windows, but only two paths in the weaker window; blocked by `min_completed_paths_per_window<5`
+- Best broadly sampled delayed-crowding shape: 448 completed paths across three windows, `49.8%` aggregate win rate, and `-4.08%` worst-window median modeled net return
+- Duplicate-source validation: a mixed June grid was rejected for overlapping event files instead of being double-counted
+
+This historical result does not authorize a funded trade. The first August 3 live-paper collection attempt terminated after 31 minutes with `reason=queue_overflow` and is invalid for promotion. A separate 15-minute reliability canary completed cleanly with 37 pools and proved that completed-window analysis can run without contending with active collection, but it is too short for promotion evidence. A clean four-hour replacement window is still required.
