@@ -1,0 +1,131 @@
+# Darwin Operator Notes
+
+## What this repo is
+
+Darwin is an evolutionary Solana trading system with two execution profiles:
+
+- `paper`: default and safest; uses `PaperExecutor`
+- `live`: explicit opt-in; uses `LiveExecutor` and real funds
+
+Autoresearch is a separate OpenAI-driven loop that experiments only against the paper app.
+
+## Safety defaults
+
+- Set `DARWIN_MODE=paper` unless you are intentionally validating live trading.
+- `darwin-live` is defined in PM2 but should stay stopped unless explicitly started.
+- `darwin-live-canary` is the one-shot PM2 profile for tiny live validation; it is configured to stop after a clean canary exit instead of restarting.
+- Autoresearch must target `darwin-paper-research` only and must never restart `darwin-paper-stable` or `darwin-live`.
+- No secrets belong in source files, docs, or tracked scripts.
+
+## PM2 apps
+
+- `darwin-paper-stable`: primary paper-trading process for clean evaluation
+- `darwin-paper-research`: sandbox paper-trading process for autoresearch
+- `darwin-live`: live-trading process, stopped by default
+- `darwin-live-canary`: one-shot live-canary process, stopped by default
+- `darwin-autoresearch`: experiment runner, stopped by default until OpenAI env is ready
+
+Use the ecosystem file:
+
+```bash
+pm2 start ecosystem.config.cjs --only darwin-paper-stable
+pm2 start ecosystem.config.cjs --only darwin-paper-research
+pm2 start ecosystem.config.cjs --only darwin-autoresearch
+pm2 start ecosystem.config.cjs --only darwin-live-canary
+pm2 start ecosystem.config.cjs --only darwin-live
+```
+
+## Required env
+
+Minimum paper mode:
+
+```bash
+DARWIN_MODE=paper
+RPC_URL=...
+RPC_URLS=...
+WSS_URL=...
+STARTING_BALANCE_SOL=1.0
+DARWIN_POP_SIZE=16
+DARWIN_RESEARCH_MODE=false
+DARWIN_GENERATION_INTERVAL_MIN=60
+DARWIN_GENERATION_TRADE_THRESHOLD=75
+MIGRATION_MIN_LIQUIDITY_SOL=25
+AMM_ACTIVITY_MIN_LIQUIDITY_SOL=50
+DARWIN_TARGET_ENTRY_POOL_PCT=0.03
+DARWIN_MIN_MEANINGFUL_FILL_RATIO=0.5
+DARWIN_PAPER_MAX_POSITION_PCT=0.12
+```
+
+Live-only env:
+
+```bash
+PRIVATE_KEY=...
+LIVE_TRADE_SIZE_SOL=0.001
+LIVE_MIN_BALANCE_SOL=1.0
+```
+
+Autoresearch:
+
+```bash
+OPENAI_API_KEY=...
+OPENAI_MODEL=gpt-5.3-codex
+OPENAI_REASONING_EFFORT=medium
+AUTORESEARCH_TARGET_APP=darwin-paper-research
+DB_PATH=data/research/darwin.db
+AUTORESEARCH_MIN_TRADES=30
+AUTORESEARCH_VALIDATION_WINDOWS=2
+AUTORESEARCH_MIRROR_DIR=/path/to/clean-push-worktree
+AUTORESEARCH_PUSH_AFTER_KEEP=false
+```
+
+`darwin-paper-research` under PM2 runs with research cadence defaults (`DARWIN_RESEARCH_MODE=true`, `20m` / `25` trades) so generation cycles can happen within autoresearch windows. `darwin-paper-stable` stays on standard cadence.
+If the deployment repo is not the GitHub-tracking worktree, set `AUTORESEARCH_MIRROR_DIR` so keeper commits are mirrored out of the live VM repo instead of living only there.
+
+Legacy `PAPER_TRADING` and `PAPER_TRADE` values still map into the new mode logic temporarily, but Darwin warns until `DARWIN_MODE` is set explicitly.
+
+## Common commands
+
+```bash
+# Install and build
+npm install
+npm run build
+
+# Start paper mode
+pm2 start ecosystem.config.cjs --only darwin-paper-stable
+pm2 start ecosystem.config.cjs --only darwin-paper-research
+
+# Check health
+pm2 list
+pm2 logs darwin-paper-stable --lines 50 --nostream
+pm2 logs darwin-paper-research --lines 50 --nostream
+pm2 logs darwin-autoresearch --lines 50 --nostream
+
+# Evaluate paper performance
+npm run eval-window -- 0
+npm run eval-window:stable -- 0
+npm run eval-window:research -- 0
+python3 eval.py 0
+
+# Stop live mode if it was started
+pm2 stop darwin-live
+```
+
+When split paper lanes exist, the generic evaluator commands default to `data/stable/darwin.db`.
+
+## Autoresearch rules
+
+- Tunable files only:
+  - `src/evolution/EvolutionEngine.ts`
+  - `src/genome/GenomeFactory.ts`
+  - `src/market/MarketFeed.ts`
+  - `src/Orchestrator.ts`
+  - `src/execution/BankrollManager.ts`
+- Commits must stage only the tuned file, never logs or runtime outputs.
+- If build or paper-app health fails, revert immediately and leave `darwin-paper-research` on the last known good build.
+- Keepers must improve the shared mission rank tuple, not just a single scalar score.
+
+## Related docs
+
+- `README.md`: public setup and repo overview
+- `AGENTS.md`: automation contract for code agents
+- `GENESIS.md`: long-term strategy and mission, not the operator runbook

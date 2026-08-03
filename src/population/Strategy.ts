@@ -15,14 +15,16 @@ export class Strategy {
   public readonly isPaper: boolean
   public trades: ClosedTrade[] = []
   public readonly startedAt: number
+  private readonly seededFromMemory: boolean
   private signalFn: SignalFn
   private lastEntryAt = 0
 
-  constructor(genome: Genome, isPaper: boolean) {
+  constructor(genome: Genome, isPaper: boolean, seededFromMemory = false) {
     this.id = 'strategy_' + uuidv4().slice(0, 8)
     this.genome = genome
     this.isPaper = isPaper
     this.startedAt = Date.now()
+    this.seededFromMemory = seededFromMemory
     this.signalFn = compile(genome.entry)
   }
 
@@ -48,6 +50,14 @@ export class Strategy {
 
   public getFitness(): FitnessScore {
     return scorer.score(this.id, this.genome.id, this.trades, this.startedAt)
+  }
+
+  public getAssessment(): FitnessScore {
+    return this.getFitness()
+  }
+
+  public wasSeededFromMemory(): boolean {
+    return this.seededFromMemory
   }
 
   public getHoursActive(): number {

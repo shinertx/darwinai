@@ -15,6 +15,7 @@ const LEAF_SIGNAL_TYPES: SignalType[] = [
 ]
 
 const LOGIC_TYPES: SignalType[] = ['AND', 'OR', 'NOT', 'THRESHOLD', 'WEIGHTED_SUM']
+type StrategyBias = 'migration' | 'exploration'
 
 function randBetween(min: number, max: number): number {
   return min + Math.random() * (max - min)
@@ -52,21 +53,33 @@ function defaultParams(type: SignalType): Record<string, number> {
   }
 }
 
-function randomExitGenome(): ExitGenome {
+function randomExitGenome(bias: StrategyBias = 'exploration'): ExitGenome {
+  if (bias === 'migration') {
+    return {
+      takeProfitPct: randBetween(0.25, 1.20),
+      trailingActivatePct: randBetween(0.10, 0.35),
+      trailingDistancePct: randBetween(0.08, 0.22),
+      timeStopMs: randBetween(60000, 300000),
+      noPumpBailMs: randBetween(18000, 42000),
+      fadeGivebackPct: randBetween(0.15, 0.35),
+      moonbagPct: Math.random() < 0.45 ? randBetween(0.12, 0.45) : 0,
+    }
+  }
+
   return {
-    takeProfitPct: randBetween(0.1, 2.0),
-    trailingActivatePct: randBetween(0.05, 0.3),
-    trailingDistancePct: randBetween(0.1, 0.4),
-    timeStopMs: randBetween(60000, 600000),
-    noPumpBailMs: randBetween(30000, 120000),
-    fadeGivebackPct: randBetween(0.3, 0.7),
+    takeProfitPct: randBetween(0.08, 0.80),
+    trailingActivatePct: randBetween(0.04, 0.20),
+    trailingDistancePct: randBetween(0.05, 0.25),
+    timeStopMs: randBetween(30000, 180000),
+    noPumpBailMs: randBetween(15000, 45000),
+    fadeGivebackPct: randBetween(0.2, 0.5),
     moonbagPct: Math.random() < 0.3 ? randBetween(0.1, 0.5) : 0,
   }
 }
 
 function randomRiskGenome(): RiskGenome {
   return {
-    capitalPct: randBetween(0.15, 0.55),
+    capitalPct: randBetween(0.01, 0.05),
     maxConcurrent: randInt(1, 6),
     drawdownPausePct: randBetween(0.3, 0.6),
     cooldownMs: randBetween(1000, 10000),
@@ -103,11 +116,47 @@ function buildRandomEntryGenome(): EntryGenome {
   return { nodes, outputNodeId: nodes[nodes.length - 1].id }
 }
 
+function buildMigrationBiasedEntryGenome(): EntryGenome {
+  const migNode: SignalNode = {
+    id: 'node_' + uuidv4().slice(0, 8),
+    type: 'migration_signal',
+    params: {},
+    inputs: [],
+  }
+  const nodes: SignalNode[] = [migNode]
+  let outputId = migNode.id
+
+  // 60% chance to add a liquidity depth filter (AND with migration)
+  if (Math.random() < 0.60) {
+    const liqNode: SignalNode = {
+      id: 'node_' + uuidv4().slice(0, 8),
+      type: 'liquidity_depth',
+      params: { minSol: randBetween(20, 100), maxSol: randBetween(200, 1000) },
+      inputs: [],
+    }
+    const andNode: SignalNode = {
+      id: 'node_' + uuidv4().slice(0, 8),
+      type: 'AND',
+      params: {},
+      inputs: [migNode.id, liqNode.id],
+    }
+    nodes.push(liqNode, andNode)
+    outputId = andNode.id
+  }
+
+  return { nodes, outputNodeId: outputId }
+}
+
 export function createRandom(generation = 0): Genome {
+  const bias: StrategyBias = Math.random() < 0.80 ? 'migration' : 'exploration'
+  const entry = bias === 'migration'
+    ? buildMigrationBiasedEntryGenome()
+    : buildRandomEntryGenome()
+
   return {
     id: 'genome_' + uuidv4().slice(0, 8),
-    entry: buildRandomEntryGenome(),
-    exit: randomExitGenome(),
+    entry,
+    exit: randomExitGenome(bias),
     risk: randomRiskGenome(),
     generation,
     parentIds: [],
@@ -116,9 +165,24 @@ export function createRandom(generation = 0): Genome {
 }
 
 export function crossover(a: Genome, b: Genome, generation: number): Genome {
-  const useAEntry = Math.random() < 0.5
+  const aHasMigration = a.entry.nodes.some((n: SignalNode) => n.type === 'migration_signal')
+  const bHasMigration = b.entry.nodes.some((n: SignalNode) => n.type === 'migration_signal')
+  const eitherHasMigration = aHasMigration || bHasMigration
+
+  let useAEntry: boolean
+  if (eitherHasMigration && Math.random() < 0.70) {
+    // Inherit migration-focused entry from whichever parent has it
+    useAEntry = aHasMigration ? true : false
+  } else {
+    useAEntry = Math.random() < 0.5
+  }
   const entry = deepClone(useAEntry ? a.entry : b.entry)
-  const exit = deepClone(useAEntry ? b.exit : a.exit)
+  const entryBias: StrategyBias = entry.nodes.some((n: SignalNode) => n.type === 'migration_signal')
+    ? 'migration'
+    : 'exploration'
+  const exit = Math.random() < 0.7
+    ? deepClone(entryBias === 'migration' ? (aHasMigration ? a.exit : b.exit) : (useAEntry ? b.exit : a.exit))
+    : randomExitGenome(entryBias)
 
   const risk: RiskGenome = {
     capitalPct: Math.max(a.risk.capitalPct, b.risk.capitalPct) * 0.6 +
@@ -149,10 +213,23 @@ export function mutate(g: Genome, generation: number): Genome {
 
   const roll = Math.random()
 
+  // Mutation resistance: migration-rooted genomes are 85% resistant to type changes
+  const hasMigrationRoot = clone.entry.nodes.some((n: SignalNode) => n.type === 'migration_signal')
+  if (hasMigrationRoot && Math.random() < 0.85) {
+    // Only mutate params, not structure
+    if (clone.entry.nodes.length > 0) {
+      const node = pick(clone.entry.nodes)
+      for (const key of Object.keys(node.params)) {
+        node.params[key] = node.params[key] * (0.8 + Math.random() * 0.4)
+      }
+    }
+    return clone
+  }
+
   if (roll < 0.05) {
     clone.entry = buildRandomEntryGenome()
   } else if (roll < 0.10) {
-    clone.exit = randomExitGenome()
+    clone.exit = randomExitGenome(hasMigrationRoot ? 'migration' : 'exploration')
   } else if (roll < 0.35) {
     if (clone.entry.nodes.length > 0) {
       const node = pick(clone.entry.nodes)
@@ -186,15 +263,15 @@ export function mutate(g: Genome, generation: number): Genome {
     }
   } else if (roll < 0.75) {
     const ex = clone.exit
-    ex.takeProfitPct = clamp(ex.takeProfitPct * (0.8 + Math.random() * 0.4), 0.05, 3.0)
-    ex.trailingActivatePct = clamp(ex.trailingActivatePct * (0.8 + Math.random() * 0.4), 0.02, 0.5)
-    ex.trailingDistancePct = clamp(ex.trailingDistancePct * (0.8 + Math.random() * 0.4), 0.05, 0.6)
-    ex.timeStopMs = clamp(ex.timeStopMs * (0.8 + Math.random() * 0.4), 30000, 900000)
-    ex.noPumpBailMs = clamp(ex.noPumpBailMs * (0.8 + Math.random() * 0.4), 20000, 180000)
-    ex.fadeGivebackPct = clamp(ex.fadeGivebackPct * (0.8 + Math.random() * 0.4), 0.1, 0.9)
+    ex.takeProfitPct = clamp(ex.takeProfitPct * (0.8 + Math.random() * 0.4), 0.05, 1.0)
+    ex.trailingActivatePct = clamp(ex.trailingActivatePct * (0.8 + Math.random() * 0.4), 0.02, 0.3)
+    ex.trailingDistancePct = clamp(ex.trailingDistancePct * (0.8 + Math.random() * 0.4), 0.03, 0.4)
+    ex.timeStopMs = clamp(ex.timeStopMs * (0.8 + Math.random() * 0.4), 20000, 240000)
+    ex.noPumpBailMs = clamp(ex.noPumpBailMs * (0.8 + Math.random() * 0.4), 10000, 60000)
+    ex.fadeGivebackPct = clamp(ex.fadeGivebackPct * (0.8 + Math.random() * 0.4), 0.1, 0.6)
   } else {
     const rk = clone.risk
-    rk.capitalPct = clamp(rk.capitalPct * (0.9 + Math.random() * 0.2), 0.1, 0.95)
+    rk.capitalPct = clamp(rk.capitalPct * (0.9 + Math.random() * 0.2), 0.005, 0.05)
     rk.drawdownPausePct = clamp(rk.drawdownPausePct * (0.9 + Math.random() * 0.2), 0.1, 0.8)
     rk.cooldownMs = clamp(rk.cooldownMs * (0.8 + Math.random() * 0.4), 500, 30000)
     rk.maxPoolPct = clamp(rk.maxPoolPct * (0.8 + Math.random() * 0.4), 0.01, 0.1)
